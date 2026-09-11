@@ -140,7 +140,7 @@ func resetPassword(cfg config.Config) error {
 	if err != nil {
 		return err
 	}
-	if err := st.SetPasswordHash(ctx, hash); err != nil {
+	if err := st.SetPasswordHash(ctx, hash, ""); err != nil {
 		return err
 	}
 	fmt.Println("Password updated. All sessions were logged out.")

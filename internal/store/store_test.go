@@ -131,7 +131,7 @@ func TestPasswordAndSessions(t *testing.T) {
 	}
 
 	// Setting a password removes every session.
-	if err := s.SetPasswordHash(ctx, "hash"); err != nil {
+	if err := s.SetPasswordHash(ctx, "hash", ""); err != nil {
 		t.Fatal(err)
 	}
 	has, err = s.HasPassword(ctx)

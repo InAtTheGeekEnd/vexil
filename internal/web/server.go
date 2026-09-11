@@ -278,7 +278,7 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
-	if err := s.store.SetPasswordHash(r.Context(), hash); err != nil {
+	if err := s.store.SetPasswordHash(r.Context(), hash, ""); err != nil {
 		s.serverError(w, err)
 		return
 	}

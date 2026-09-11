@@ -145,3 +145,41 @@ func (s *Store) LastSuccess(ctx context.Context, monitorID int64) (time.Time, er
 	}
 	return time.Unix(at.Int64, 0), nil
 }
+
+// MonitorIncident is an incident together with the name of its monitor.
+type MonitorIncident struct {
+	Incident
+	MonitorName string
+}
+
+// RecentIncidents returns the incidents that were open at any time since
+// the given time, newest first. With publicOnly, only incidents of monitors
+// shown on the status page are returned.
+func (s *Store) RecentIncidents(ctx context.Context, since time.Time, publicOnly bool) ([]MonitorIncident, error) {
+	q := `SELECT i.id, i.monitor_id, i.started_at, i.ended_at, COALESCE(i.reason, ''), m.name
+		FROM incidents i JOIN monitors m ON m.id = i.monitor_id
+		WHERE (i.ended_at IS NULL OR i.ended_at >= ?)`
+	if publicOnly {
+		q += ` AND m.public = 1`
+	}
+	rows, err := s.db.QueryContext(ctx, q+` ORDER BY i.started_at DESC`, since.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []MonitorIncident
+	for rows.Next() {
+		var inc MonitorIncident
+		var ended sql.NullInt64
+		var started int64
+		if err := rows.Scan(&inc.ID, &inc.MonitorID, &started, &ended, &inc.Reason, &inc.MonitorName); err != nil {
+			return nil, err
+		}
+		inc.StartedAt = time.Unix(started, 0)
+		if ended.Valid {
+			inc.EndedAt = time.Unix(ended.Int64, 0)
+		}
+		out = append(out, inc)
+	}
+	return out, rows.Err()
+}

@@ -71,7 +71,7 @@ func setPassword(t *testing.T, st *store.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetPasswordHash(context.Background(), hash); err != nil {
+	if err := st.SetPasswordHash(context.Background(), hash, ""); err != nil {
 		t.Fatal(err)
 	}
 }
