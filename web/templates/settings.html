@@ -21,7 +21,7 @@
         {{with index .Errors "name"}}<span class="error">{{.}}</span>{{else}}<span class="hint">Shown in the header, page titles, emails and alerts.</span>{{end}}
       </label>
       <div class="field{{if index .Errors "logo"}} invalid{{end}}">
-        <span>Logo</span>
+        <label for="logo">Logo</label>
         <div class="logo-row">
           <span class="logo-preview" aria-hidden="true">{{template "logo" $}}</span>
           <input type="file" name="logo" id="logo" accept="image/svg+xml,image/png,.svg,.png">
