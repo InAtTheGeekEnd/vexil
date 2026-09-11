@@ -383,6 +383,12 @@ func TestInitialStatusFromDatabase(t *testing.T) {
 			if err := env.store.CreateMonitor(ctx, m); err != nil {
 				t.Fatal(err)
 			}
+			// The seeded checks are minutes old, so the first live check is
+			// due at once. A blocking checker keeps its result from replacing
+			// the restored status before the assertion.
+			env.mu.Lock()
+			env.checkers[m.ID] = &blocking{started: make(chan struct{}, 1)}
+			env.mu.Unlock()
 			for i, ok := range tt.checks {
 				c := store.Check{MonitorID: m.ID, At: now.Add(time.Duration(i-10) * time.Minute), OK: ok}
 				if !ok {
