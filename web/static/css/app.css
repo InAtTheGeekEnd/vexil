@@ -21,6 +21,11 @@
   --warn: #D97706;
   --down: #DC2626;
   --paused: #9CA3AF;
+  /* Status colors as text. Darker than the dots so they reach 4.5:1 on
+     --bg and --surface. Dots, bars and charts keep the plain colors. */
+  --up-text: #15803D;
+  --warn-text: #B45309;
+  --down-text: #B91C1C;
 
   --accent-hover: color-mix(in srgb, var(--accent) 88%, #000);
   --accent-tint: color-mix(in srgb, var(--accent) 12%, transparent);
@@ -47,6 +52,9 @@
   --warn: #F59E0B;
   --down: #EF4444;
   --paused: #4B5563;
+  --up-text: #22C55E;
+  --warn-text: #F59E0B;
+  --down-text: #F87171;
   --accent-hover: color-mix(in srgb, var(--accent) 85%, #fff);
   --accent-text: var(--accent-text-dark, var(--accent));
   color-scheme: dark;
@@ -63,6 +71,9 @@
     --warn: #F59E0B;
     --down: #EF4444;
     --paused: #4B5563;
+    --up-text: #22C55E;
+    --warn-text: #F59E0B;
+    --down-text: #F87171;
     --accent-hover: color-mix(in srgb, var(--accent) 85%, #fff);
     --accent-text: var(--accent-text-dark, var(--accent));
     color-scheme: dark;
@@ -79,6 +90,9 @@
   --warn: #D97706;
   --down: #DC2626;
   --paused: #9CA3AF;
+  --up-text: #15803D;
+  --warn-text: #B45309;
+  --down-text: #B91C1C;
   --accent-hover: color-mix(in srgb, var(--accent) 88%, #000);
   --accent-text: var(--accent-text-light, var(--accent));
   color-scheme: light;
@@ -261,7 +275,7 @@ svg { display: block; }
 .btn-primary:hover { background: var(--accent-hover); }
 .btn-secondary { background: transparent; color: var(--text); border-color: var(--border); }
 .btn-secondary:hover { border-color: var(--muted); }
-.btn-danger { background: transparent; color: var(--down); border-color: color-mix(in srgb, var(--down) 40%, transparent); }
+.btn-danger { background: transparent; color: var(--down-text); border-color: color-mix(in srgb, var(--down) 40%, transparent); }
 .btn-danger:hover { background: color-mix(in srgb, var(--down) 8%, transparent); }
 .btn-ghost { background: transparent; color: var(--muted); }
 .btn-ghost:hover { color: var(--text); background: color-mix(in srgb, var(--text) 6%, transparent); }
@@ -274,7 +288,7 @@ svg { display: block; }
 .field > span, .field > label { font-weight: 600; }
 .field .hint { color: var(--muted); font-size: 12px; }
 .field.invalid input, .field.invalid select { border-color: var(--down); }
-.field .error { color: var(--down); font-size: 12px; }
+.field .error { color: var(--down-text); font-size: 12px; }
 
 .input, .field input:not([type="checkbox"]):not([type="radio"]), .field select {
   height: 40px;
@@ -333,12 +347,12 @@ svg { display: block; }
 .alert-error {
   border-color: color-mix(in srgb, var(--down) 35%, transparent);
   background: color-mix(in srgb, var(--down) 8%, transparent);
-  color: var(--down);
+  color: var(--down-text);
 }
 .alert-ok {
   border-color: color-mix(in srgb, var(--up) 35%, transparent);
   background: color-mix(in srgb, var(--up) 8%, transparent);
-  color: var(--up);
+  color: var(--up-text);
 }
 
 /* --- Status dot --- */
@@ -382,8 +396,8 @@ svg { display: block; }
   gap: 8px;
   font-weight: 600;
 }
-.status-up { color: var(--up); }
-.status-down { color: var(--down); }
+.status-up { color: var(--up-text); }
+.status-down { color: var(--down-text); }
 .status-paused, .status-pending { color: var(--muted); }
 
 /* --- Uptime bar --- */
@@ -548,8 +562,8 @@ body.auth { align-items: center; justify-content: center; padding: 24px 16px; }
 }
 .mon-row:first-child { border-top: 0; }
 .mon-row:hover { background: color-mix(in srgb, var(--text) 3%, transparent); }
-.mon-row.mon-down { background: color-mix(in srgb, var(--down) 5%, transparent); }
-.mon-row.mon-down:hover { background: color-mix(in srgb, var(--down) 9%, transparent); }
+.mon-row.mon-down { background: color-mix(in srgb, var(--down) 3%, transparent); }
+.mon-row.mon-down:hover { background: color-mix(in srgb, var(--down) 6%, transparent); }
 .mon-row.dragging { opacity: 0.4; }
 .monitors.dragging, .monitors.dragging * { cursor: grabbing; user-select: none; }
 
@@ -616,8 +630,8 @@ body.auth { align-items: center; justify-content: center; padding: 24px 16px; }
 .tiles { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); margin-bottom: 16px; }
 .tiles .card { padding: 16px; }
 .stat .value.value-empty { font-size: 16px; font-weight: 400; color: var(--muted); }
-.stat .value.warn { color: var(--warn); }
-.stat .value.down { color: var(--down); }
+.stat .value.warn { color: var(--warn-text); }
+.stat .value.down { color: var(--down-text); }
 .card-head {
   display: flex;
   align-items: center;
@@ -645,7 +659,7 @@ body.auth { align-items: center; justify-content: center; padding: 24px 16px; }
 .table td { padding: 10px 16px 10px 0; border-top: 1px solid var(--border); vertical-align: top; }
 .table th:last-child, .table td:last-child { padding-right: 0; }
 .nowrap { white-space: nowrap; }
-.incident-open td:first-child { color: var(--down); font-weight: 600; }
+.incident-open td:first-child { color: var(--down-text); font-weight: 600; }
 @media (max-width: 900px) {
   /* Keep the newest 60 of 90 segments. */
   .uptime-90 .seg:nth-last-child(n+61) { display: none; }
@@ -757,7 +771,7 @@ body.auth { align-items: center; justify-content: center; padding: 24px 16px; }
 .chan-off .chan-type, .chan-off .chan-name > .w-600 { color: var(--muted); }
 .chan-name { grid-area: name; display: flex; flex-direction: column; min-width: 0; }
 .chan-name > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chan-error { color: var(--down); }
+.chan-error { color: var(--down-text); }
 .chan-switch { grid-area: switch; display: flex; }
 .chan-actions { grid-area: actions; flex-wrap: nowrap; }
 @media (max-width: 640px) {

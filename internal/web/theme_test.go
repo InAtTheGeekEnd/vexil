@@ -9,7 +9,7 @@ import (
 	assets "github.com/InAtTheGeekEnd/vexil/web"
 )
 
-var tokenRE = regexp.MustCompile(`--([a-z-]+):(#[0-9A-F]{6})`)
+var tokenRE = regexp.MustCompile(`--([a-z-]+):\s*(#[0-9A-Fa-f]{6})`)
 
 // TestThemeCSSPassesAA parses the served tokens and checks the contrast of
 // accent text on both page backgrounds and of button text on the accent.
@@ -56,6 +56,48 @@ func TestThemeBackgroundsMatchCSS(t *testing.T) {
 		for _, line := range strings.Split(s, "\n") {
 			if strings.Contains(line, sel) && strings.Contains(line, "var(--accent)") {
 				t.Errorf("accent used directly for text or a focus ring: %s", strings.TrimSpace(line))
+			}
+		}
+	}
+}
+
+// cssBlock returns the body of the first CSS block that starts with sel.
+func cssBlock(t *testing.T, css, sel string) string {
+	t.Helper()
+	i := strings.Index(css, sel)
+	if i < 0 {
+		t.Fatalf("app.css has no block %q", sel)
+	}
+	rest := css[i:]
+	end := strings.Index(rest, "}")
+	if end < 0 {
+		t.Fatalf("block %q does not end", sel)
+	}
+	return rest[:end]
+}
+
+// TestStatusTextTokensPassAA reads the status text tokens of both themes
+// from app.css and checks them on the page and card backgrounds.
+func TestStatusTextTokensPassAA(t *testing.T) {
+	css, err := assets.Static.ReadFile("static/css/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, theme := range []string{":root {", `[data-theme="dark"] {`} {
+		tokens := map[string]string{}
+		for _, m := range tokenRE.FindAllStringSubmatch(cssBlock(t, string(css), theme), -1) {
+			tokens[m[1]] = m[2]
+		}
+		for _, name := range []string{"up-text", "warn-text", "down-text"} {
+			text, ok := tokens[name]
+			if !ok {
+				t.Errorf("%s: no --%s token", theme, name)
+				continue
+			}
+			for _, bg := range []string{"bg", "surface"} {
+				if c := brand.Contrast(text, tokens[bg]); c < brand.AAText {
+					t.Errorf("%s: --%s %s on --%s %s has contrast %.2f", theme, name, text, bg, tokens[bg], c)
+				}
 			}
 		}
 	}
