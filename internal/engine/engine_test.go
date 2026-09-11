@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"sync"
@@ -438,5 +439,47 @@ func TestHub(t *testing.T) {
 	}
 	if ev := <-b; ev.MonitorID != 3 {
 		t.Fatalf("b got %+v", ev)
+	}
+}
+
+func TestCheckNow(t *testing.T) {
+	env := newEnv(t)
+	if err := env.engine.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	events, stop := env.engine.Hub().Subscribe(64)
+	defer stop()
+
+	// A long interval so the scheduler does not run a check first.
+	m := &store.Monitor{Name: "m", Type: store.TypeHTTP, Target: "x", IntervalS: 900}
+	if err := env.store.CreateMonitor(context.Background(), m); err != nil {
+		t.Fatal(err)
+	}
+	env.mu.Lock()
+	env.checkers[m.ID] = &scripted{results: []check.Result{{Error: "HTTP 503"}}}
+	env.mu.Unlock()
+	if err := env.engine.Reload(context.Background(), m.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := env.engine.CheckNow(context.Background(), m.ID)
+	if err != nil || res.OK || res.Error != "HTTP 503" {
+		t.Fatalf("CheckNow = %+v, %v", res, err)
+	}
+	ev := waitFor(t, events, 2*time.Second, func(ev Event) bool { return ev.MonitorID == m.ID && ev.Result.Error == "HTTP 503" })
+	if ev.State != Pending {
+		t.Fatalf("state after one failure = %s, want PENDING", ev.State)
+	}
+	checks, err := env.store.RecentChecks(context.Background(), m.ID, 5)
+	if err != nil || len(checks) != 1 || checks[0].Error != "HTTP 503" {
+		t.Fatalf("stored checks = %+v, %v", checks, err)
+	}
+
+	p := env.addMonitor(t, store.TypePush, nil)
+	if _, err := env.engine.CheckNow(context.Background(), p.ID); !errors.Is(err, ErrNoChecker) {
+		t.Fatalf("push CheckNow err = %v, want ErrNoChecker", err)
+	}
+	if _, err := env.engine.CheckNow(context.Background(), 9999); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("missing CheckNow err = %v, want ErrNotFound", err)
 	}
 }

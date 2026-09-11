@@ -463,3 +463,32 @@ func (e *Engine) handle(r result) {
 	}
 	e.hub.Publish(ev)
 }
+
+// ErrNoChecker is returned by CheckNow for monitors that have no active
+// checker: push monitors and paused monitors.
+var ErrNoChecker = errors.New("monitor has no active checker")
+
+// CheckNow runs one check for a monitor at once, records the result like a
+// scheduled check and returns it. The form handler uses it so the user sees
+// a result right after saving.
+func (e *Engine) CheckNow(ctx context.Context, id int64) (check.Result, error) {
+	m, err := e.store.Monitor(ctx, id)
+	if err != nil {
+		return check.Result{}, err
+	}
+	if m.Paused || m.Type == store.TypePush {
+		return check.Result{}, ErrNoChecker
+	}
+	checker, err := e.newChecker(m)
+	if err != nil {
+		return check.Result{}, err
+	}
+	cctx, cancel := context.WithTimeout(ctx, check.Timeout)
+	defer cancel()
+	res := checker.Check(cctx)
+	if ctx.Err() != nil {
+		return res, ctx.Err()
+	}
+	e.enqueue(result{monitorID: id, res: res, at: time.Now()})
+	return res, nil
+}
