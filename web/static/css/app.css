@@ -208,6 +208,11 @@ svg { display: block; }
 }
 .nav a:hover, .nav a[aria-current="page"] { color: var(--text); text-decoration: none; }
 .nav a[aria-current="page"] { background: color-mix(in srgb, var(--text) 6%, transparent); }
+@media (max-width: 640px) {
+  /* The brand and Log out share the first row; the nav gets its own row. */
+  .topbar-inner { height: auto; flex-wrap: wrap; padding-block: 8px; }
+  .nav { order: 1; width: 100%; margin-left: -10px; }
+}
 
 .footer { border-top: 1px solid var(--border); padding: 16px 0; font-size: 12px; }
 .footer-inner {
@@ -327,6 +332,7 @@ svg { display: block; }
   padding: 20px;
 }
 .card + .card { margin-top: 16px; }
+.grid > .card + .card { margin-top: 0; }
 .card-title { font-size: 14px; font-weight: 600; margin-bottom: 12px; }
 
 /* Stat tile: a label and one large number. */
@@ -424,10 +430,11 @@ svg { display: block; }
 /* Tooltip on hover. Text comes from data-tip. */
 .uptime .seg[data-tip]::after {
   content: attr(data-tip);
+  display: none;
   position: absolute;
   bottom: calc(100% + 8px);
   left: 50%;
-  transform: translateX(-50%) translateY(2px);
+  transform: translateX(-50%);
   padding: 6px 8px;
   border-radius: 6px;
   background: var(--text);
@@ -437,15 +444,11 @@ svg { display: block; }
   line-height: 1.35;
   white-space: pre;
   pointer-events: none;
-  opacity: 0;
-  transition: opacity var(--ease), transform var(--ease);
   z-index: 2;
 }
-.uptime .seg[data-tip]:hover::after { opacity: 1; transform: translateX(-50%) translateY(0); }
-.uptime .seg:first-child[data-tip]::after { left: 0; transform: translateX(0) translateY(2px); }
-.uptime .seg:first-child[data-tip]:hover::after { transform: translateX(0); }
-.uptime .seg:last-child[data-tip]::after { left: auto; right: 0; transform: translateX(0) translateY(2px); }
-.uptime .seg:last-child[data-tip]:hover::after { transform: translateX(0); }
+.uptime .seg[data-tip]:hover::after { display: block; }
+.uptime .seg:first-child[data-tip]::after { left: 0; transform: none; }
+.uptime .seg:last-child[data-tip]::after { left: auto; right: 0; transform: none; }
 
 /* On narrow screens show only the newest 14 of 30 segments. */
 @media (max-width: 640px) {
@@ -642,9 +645,7 @@ body.auth { align-items: center; justify-content: center; padding: 24px 16px; }
 }
 .card-head .card-title { margin-bottom: 0; }
 .chart-empty { padding: 48px 0; text-align: center; }
-.uptime-90 .seg[data-tip]::after { bottom: auto; top: calc(100% + 8px); transform: translateX(-50%) translateY(-2px); }
-.uptime-90 .seg:first-child[data-tip]::after { transform: translateX(0) translateY(-2px); }
-.uptime-90 .seg:last-child[data-tip]::after { transform: translateX(0) translateY(-2px); }
+.uptime-90 .seg[data-tip]::after { bottom: auto; top: calc(100% + 8px); }
 .table-wrap { overflow-x: auto; }
 .table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .table th {
