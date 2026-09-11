@@ -416,7 +416,7 @@ func TestStaticFontAndLogo(t *testing.T) {
 	}{
 		{"/static/fonts/InterVariable.woff2", "font/woff2"},
 		{"/static/fonts/OFL.txt", "text/plain"},
-		{"/static/img/logo.svg", "image/svg+xml"},
+		{"/static/brand/logo.svg", "image/svg+xml"},
 		{"/static/js/theme.js", "javascript"},
 		{"/static/js/chart.js", "javascript"},
 	}
