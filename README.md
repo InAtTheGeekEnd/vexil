@@ -145,13 +145,66 @@ Plain HTTP is acceptable on a trusted private network, for example at home or ov
 
 The status page is at `/status`. It shows the monitors that have **Show on status page** on. Every public monitor also has a badge at `/badge/{id}.svg`; the monitor page shows the URL.
 
-To serve the status page on its own domain, point the domain at vexil through a reverse proxy.
+There are two ways to put vexil on a domain.
+
+#### Setup A: one domain for everything
+
+`vexil.example.com` serves the admin pages and the status page at `/status`.
 
 Caddy:
 
 ```
-status.example.com {
+vexil.example.com {
     reverse_proxy 127.0.0.1:8080
+}
+```
+
+nginx. Put the shared proxy lines in `/etc/nginx/snippets/vexil-proxy.conf`; the nginx examples below include it:
+
+```
+proxy_pass http://127.0.0.1:8080;
+proxy_http_version 1.1;
+proxy_set_header Connection "";
+proxy_set_header Host $host;
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Forwarded-Proto https;
+```
+
+```
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name vexil.example.com;
+
+    location / {
+        include snippets/vexil-proxy.conf;
+    }
+}
+```
+
+#### Setup B: a separate status domain
+
+`vexil.example.com` serves the admin pages. `status.example.com` serves only the public paths: `/` shows `/status`, and `/status`, `/badge/*`, `/brand/*`, `/static/*` and `/push/*` pass through. Every other path redirects to `/`.
+
+Caddy:
+
+```
+vexil.example.com {
+    reverse_proxy 127.0.0.1:8080
+}
+
+status.example.com {
+    handle / {
+        rewrite * /status
+        reverse_proxy 127.0.0.1:8080
+    }
+    @public path /status /badge/* /brand/* /static/* /push/*
+    handle @public {
+        reverse_proxy 127.0.0.1:8080
+    }
+    handle {
+        redir * / 302
+    }
 }
 ```
 
@@ -159,17 +212,48 @@ nginx:
 
 ```
 server {
-    listen 443 ssl http2;
-    server_name status.example.com;
+    listen 443 ssl;
+    http2 on;
+    server_name vexil.example.com;
+
     location / {
-        proxy_pass http://127.0.0.1:8080;
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-Proto https;
+        include snippets/vexil-proxy.conf;
+    }
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name status.example.com;
+
+    location = / {
+        rewrite ^ /status break;
+        include snippets/vexil-proxy.conf;
+    }
+    location ~ ^/(status$|badge/|brand/|static/|push/) {
+        include snippets/vexil-proxy.conf;
+    }
+    location / {
+        return 302 /;
     }
 }
 ```
 
-Set `VEXIL_BASE_URL=https://status.example.com` so links in alerts use the domain. Settings has the brand: the name, the logo, the accent color and the "Powered by" line.
+Set `VEXIL_BASE_URL=https://vexil.example.com`, the admin domain, because links in alerts open admin pages.
+
+The push URL on the monitor page also uses the admin domain. If the admin domain is private, jobs can call the same path on the status domain instead: `/push/*` passes through.
+
+To make the admin domain private, allow only private networks. In this Caddy block, `private_ranges` covers the local networks and `100.64.0.0/10` is Tailscale:
+
+```
+vexil.example.com {
+    @blocked not remote_ip private_ranges 100.64.0.0/10
+    respond @blocked 403
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+Settings has the brand: the name, the logo, the accent color and the "Powered by" line.
 
 ### Backup
 
