@@ -135,7 +135,11 @@ In Docker add `--sysctl net.ipv4.ping_group_range="0 2147483647"` to `docker run
 
 ### Use HTTPS for real installs
 
-Every open vexil tab keeps one live connection to the server for updates. Over plain HTTP a browser allows only 6 connections to one server, so several open tabs can block each other. Put vexil behind a reverse proxy with HTTPS. HTTP/2 lifts the limit.
+vexil serves plain HTTP. Put it behind a reverse proxy with HTTPS, for example Caddy or nginx. Without HTTPS, your password and session cookie cross the network as readable text.
+
+HTTPS also enables HTTP/2. Every open vexil tab keeps one live connection for updates, and over plain HTTP a browser allows only 6 connections to one server. HTTP/2 removes this limit.
+
+Plain HTTP is acceptable on a trusted private network, for example at home or over Tailscale.
 
 ### Public status page and custom domain
 
