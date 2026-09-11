@@ -887,16 +887,17 @@ img.brand-logo { object-fit: contain; }
 }
 .color-row { display: flex; align-items: center; gap: 12px; }
 .color-row code { font-size: 13px; }
-.field input[type="color"] {
+/* Same specificity as the general input rule above, so the padding wins. */
+.field .color-row input[type="color"] {
   width: 56px;
   height: 40px;
-  padding: 4px;
+  padding: 3px;
   flex: none;
   cursor: pointer;
 }
-.field input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
-.field input[type="color"]::-webkit-color-swatch { border: 0; border-radius: 4px; }
-.field input[type="color"]::-moz-color-swatch { border: 0; border-radius: 4px; }
+.field .color-row input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+.field .color-row input[type="color"]::-webkit-color-swatch { border: 0; border-radius: 4px; }
+.field .color-row input[type="color"]::-moz-color-swatch { border: 0; border-radius: 4px; }
 .badge { height: 20px; width: auto; display: block; }
 
 /* --- Public status page --- */
