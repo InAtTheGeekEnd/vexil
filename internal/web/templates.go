@@ -2,10 +2,13 @@ package web
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"html/template"
 	"io/fs"
 	"net/http"
+	"sort"
 
 	"github.com/InAtTheGeekEnd/vexil/internal/brand"
 	assets "github.com/InAtTheGeekEnd/vexil/web"
@@ -21,18 +24,49 @@ type pageData struct {
 	Content any
 }
 
+// assetVersion is a short hash of every embedded static file. It goes on
+// the static URLs as ?v=, so a new build never loads a cached old file.
+var assetVersion = hashStatic()
+
+func hashStatic() string {
+	var names []string
+	_ = fs.WalkDir(assets.Static, "static", func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			names = append(names, p)
+		}
+		return nil
+	})
+	sort.Strings(names)
+	h := sha256.New()
+	for _, name := range names {
+		b, err := fs.ReadFile(assets.Static, name)
+		if err != nil {
+			panic("embedded static file unreadable: " + err.Error())
+		}
+		h.Write([]byte(name))
+		h.Write(b)
+	}
+	return hex.EncodeToString(h.Sum(nil))[:12]
+}
+
+// assetURL returns the versioned URL of a file under /static/.
+func assetURL(name string) string {
+	return "/static/" + name + "?v=" + assetVersion
+}
+
 // parseTemplates parses each page together with the layout.
 func parseTemplates() (map[string]*template.Template, error) {
 	pages, err := fs.Glob(assets.Templates, "templates/*.html")
 	if err != nil {
 		return nil, err
 	}
+	funcs := template.FuncMap{"asset": assetURL}
 	out := make(map[string]*template.Template, len(pages))
 	for _, page := range pages {
 		if page == "templates/layout.html" {
 			continue
 		}
-		t, err := template.ParseFS(assets.Templates, "templates/layout.html", page)
+		t, err := template.New("").Funcs(funcs).ParseFS(assets.Templates, "templates/layout.html", page)
 		if err != nil {
 			return nil, fmt.Errorf("parse %s: %w", page, err)
 		}

@@ -492,3 +492,38 @@ func TestPushEndpoint(t *testing.T) {
 		t.Fatal("no event after push")
 	}
 }
+
+func TestStaticVersioning(t *testing.T) {
+	s, st := newTestServer(t, Options{})
+	setPassword(t, st)
+	if len(assetVersion) != 12 {
+		t.Fatalf("assetVersion = %q, want 12 hex chars", assetVersion)
+	}
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/login", nil))
+	page := rec.Body.String()
+	for _, want := range []string{
+		`href="/static/css/app.css?v=` + assetVersion + `"`,
+		`src="/static/js/theme.js?v=` + assetVersion + `"`,
+		`src="/static/js/app.js?v=` + assetVersion + `"`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("page lacks %s", want)
+		}
+	}
+	tests := []struct {
+		path string
+		want string
+	}{
+		{"/static/css/app.css?v=" + assetVersion, "public, max-age=31536000, immutable"},
+		{"/static/css/app.css?v=old", "no-cache"},
+		{"/static/css/app.css", "no-cache"},
+	}
+	for _, tt := range tests {
+		rec := httptest.NewRecorder()
+		s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tt.path, nil))
+		if rec.Code != http.StatusOK || rec.Header().Get("Cache-Control") != tt.want {
+			t.Errorf("%s: %d %q, want 200 %q", tt.path, rec.Code, rec.Header().Get("Cache-Control"), tt.want)
+		}
+	}
+}

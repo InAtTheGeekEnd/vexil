@@ -14,7 +14,7 @@
   <ul class="monitors" id="monitors">
   {{range .Rows}}
     <li class="mon-row mon-{{.State}}" data-id="{{.ID}}">
-      <button type="button" class="mon-handle" aria-label="Move {{.Name}}" title="Drag to reorder, or press the up or down arrow key"><svg viewBox="0 0 12 16" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="3" r="1.4"/><circle cx="8.5" cy="3" r="1.4"/><circle cx="3.5" cy="8" r="1.4"/><circle cx="8.5" cy="8" r="1.4"/><circle cx="3.5" cy="13" r="1.4"/><circle cx="8.5" cy="13" r="1.4"/></svg></button>
+      <button type="button" class="mon-handle" aria-label="Move {{.Name}}" title="Drag to reorder, or press the up or down arrow key"><svg width="12" height="16" viewBox="0 0 12 16" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="3" r="1.4"/><circle cx="8.5" cy="3" r="1.4"/><circle cx="3.5" cy="8" r="1.4"/><circle cx="8.5" cy="8" r="1.4"/><circle cx="3.5" cy="13" r="1.4"/><circle cx="8.5" cy="13" r="1.4"/></svg></button>
       <span class="dot dot-{{.State}}"><span class="sr-only">{{.StateLabel}}</span></span>
       <span class="mon-name"><a class="mon-link w-600" href="/monitors/{{.ID}}">{{.Name}}</a><span class="muted small">{{.Target}}</span></span>
       <span class="mon-uptime uptime" aria-label="Uptime for the last 30 days">{{range .Uptime}}<span class="seg {{.Class}}" data-tip="{{.Tip}}"></span>{{end}}</span>

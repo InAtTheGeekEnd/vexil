@@ -16,9 +16,15 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
+// cacheStatic lets the browser keep a versioned file (?v=) for a year and
+// makes it revalidate an unversioned one on every use.
 func cacheStatic(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "public, max-age=3600")
+		if r.URL.Query().Get("v") == assetVersion {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
 		next.ServeHTTP(w, r)
 	})
 }
