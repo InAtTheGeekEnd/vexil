@@ -50,6 +50,17 @@
     return v.replace(/^\[|\]$/g, "");
   }
 
+  // Detail page: the response chart range toggle.
+  var toggle = document.querySelector(".range-toggle");
+  if (toggle) {
+    toggle.addEventListener("click", function (e) {
+      var btn = e.target.closest("button[data-range]");
+      if (!btn) return;
+      toggle.querySelectorAll("button").forEach(function (b) { b.setAttribute("aria-pressed", b === btn ? "true" : "false"); });
+      document.querySelectorAll(".range[data-range]").forEach(function (r) { r.hidden = r.dataset.range !== btn.dataset.range; });
+    });
+  }
+
   // Dashboard: drag a row by its grip, or focus the grip and press the
   // arrow keys. Pointer Events cover mouse, pen and touch.
   var list = document.getElementById("monitors");
@@ -124,7 +135,10 @@
 
   function save() {
     var body = new URLSearchParams();
-    list.querySelectorAll(".mon-row").forEach(function (row) { body.append("id", row.dataset.id); });
+    list.querySelectorAll(".mon-row").forEach(function (row, i) {
+      row.dataset.pos = i; // live.js puts a recovered monitor back at this position
+      body.append("id", row.dataset.id);
+    });
     fetch("/monitors/reorder", { method: "POST", body: body, credentials: "same-origin" }).catch(function () {});
   }
 })();

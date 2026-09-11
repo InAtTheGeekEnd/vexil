@@ -9,7 +9,8 @@
       <span class="status status-{{.State}}"><span class="dot dot-{{.State}}"></span>{{.StateLabel}}<span class="sr-only"> status</span></span>
       <h1 class="t-40">{{.M.Name}}</h1>
       <p class="muted">{{.TypeLabel}}{{if ne .M.Type "push"}} · {{.Target}}{{end}} · every {{.Interval}}</p>
-      <p class="muted small">{{.LastLine}}</p>
+      {{if .Since}}<p class="mon-since">{{.Since}}</p>{{end}}
+      <p class="muted small" id="last-line" data-monitor="{{.M.ID}}" data-kind="{{.Kind}}" data-head="{{.LastHead}}"{{if .LastAt}} data-at="{{.LastAt}}"{{end}}>{{.LastLine}}</p>
     </div>
     <div class="row mon-actions">
       <a class="btn btn-secondary" href="/monitors/{{.M.ID}}/edit">Edit</a>
@@ -21,6 +22,13 @@
       <form method="post" action="/monitors/{{.M.ID}}/delete" class="inline" data-confirm="Delete {{.M.Name}}? This also deletes its history."><button type="submit" class="btn btn-danger">Delete</button></form>
     </div>
   </div>
+
+  <div class="grid tiles">
+  {{range .Tiles}}
+    <div class="card stat"><span class="label">{{.Label}}</span>{{if .Value}}<span class="value{{if .Class}} {{.Class}}{{end}}">{{.Value}}{{if .Unit}}<small>{{.Unit}}</small>{{end}}</span>{{else}}<span class="value value-empty">No data</span>{{end}}</div>
+  {{end}}
+  </div>
+
   {{if .PushURL}}
   <div class="card">
     <div class="card-title">Push URL</div>
@@ -33,6 +41,56 @@
     <pre class="code-block"><code>curl -fsS {{.PushURL}}</code></pre>
   </div>
   {{end}}
+
+  {{if .Charts}}
+  <div class="card" id="response">
+    <div class="card-head">
+      <div class="card-title">Response time</div>
+      <div class="range-toggle" role="group" aria-label="Chart range">
+      {{range $i, $c := .Charts}}
+        <button type="button" data-range="{{$c.Key}}" aria-pressed="{{if eq $i 0}}true{{else}}false{{end}}">{{$c.Label}}</button>
+      {{end}}
+      </div>
+    </div>
+    {{range $i, $c := .Charts}}
+    <div class="range" data-range="{{$c.Key}}"{{if ne $i 0}} hidden{{end}}>
+      {{if $c.SVG}}
+      <div class="chart-wrap">{{$c.SVG}}</div>
+      <div class="chart-axis"><span>{{$c.From}}</span><span>now</span></div>
+      {{else}}
+      <p class="chart-empty muted">Not enough data yet. The chart appears after a few checks.</p>
+      {{end}}
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+
+  <div class="card">
+    <div class="card-head">
+      <div class="card-title">Uptime · 90 days</div>
+      <span class="muted small">{{if .UptimePct}}{{.UptimePct}}% over 90 days{{else}}No data yet{{end}}</span>
+    </div>
+    <div class="uptime uptime-90" aria-label="Uptime for the last 90 days">{{range .Uptime}}<span class="seg {{.Class}}" data-tip="{{.Tip}}"></span>{{end}}</div>
+    <div class="chart-axis"><span>90 d ago</span><span>today</span></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Incidents</div>
+    {{if .Incidents}}
+    <div class="table-wrap">
+    <table class="table incidents">
+      <thead><tr><th>Start</th><th>Duration</th><th>Reason</th></tr></thead>
+      <tbody>
+      {{range .Incidents}}
+        <tr{{if .Open}} class="incident-open"{{end}}><td class="nowrap">{{.Start}}</td><td class="nowrap">{{.Duration}}</td><td>{{.Reason}}</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+    </div>
+    {{else}}
+    <p class="muted">No incidents yet.</p>
+    {{end}}
+  </div>
 {{end}}
 </main>
 {{template "footer" .}}

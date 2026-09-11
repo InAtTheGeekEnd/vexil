@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/InAtTheGeekEnd/vexil/internal/brand"
@@ -43,6 +44,8 @@ type Server struct {
 	baseURL    string
 	loginLimit *rateLimiter
 	handler    http.Handler
+	closing    chan struct{} // closed by CloseEvents to end every SSE stream
+	closeOnce  sync.Once
 }
 
 // New builds a Server. It panics only through parseTemplates when the
@@ -60,6 +63,7 @@ func New(st *store.Store, opts Options) (*Server, error) {
 		engine:     opts.Engine,
 		baseURL:    strings.TrimRight(opts.BaseURL, "/"),
 		loginLimit: newRateLimiter(5, time.Minute),
+		closing:    make(chan struct{}),
 	}
 	if s.brand.Name == "" {
 		s.brand = brand.Default
@@ -98,6 +102,7 @@ func (s *Server) routes() http.Handler {
 
 	mux.Handle("GET /{$}", s.requireAdmin(http.HandlerFunc(s.handleDashboard)))
 	mux.Handle("GET /styleguide", s.requireAdmin(http.HandlerFunc(s.handleStyleguide)))
+	mux.Handle("GET /events", s.requireAdmin(http.HandlerFunc(s.handleEvents)))
 	admin := map[string]http.HandlerFunc{
 		"GET /monitors/new":          s.handleMonitorNewForm,
 		"POST /monitors/new":         s.handleMonitorCreate,

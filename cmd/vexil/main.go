@@ -89,6 +89,10 @@ func serve(cfg config.Config, log *slog.Logger) error {
 		IdleTimeout:       60 * time.Second,
 	}
 
+	// SSE streams are open requests. End them first so Shutdown does not
+	// wait for them.
+	httpSrv.RegisterOnShutdown(srv.CloseEvents)
+
 	errc := make(chan error, 1)
 	go func() {
 		log.Info("listening", "addr", cfg.Addr, "data", cfg.Data)

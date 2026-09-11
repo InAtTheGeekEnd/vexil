@@ -55,6 +55,9 @@ type monitorRow struct {
 	UptimePct  string // "" when there is no data
 	Spark      template.HTML
 	Checked    string
+	CheckedAt  int64  // unix seconds of the newest result, 0 when there is none
+	Kind       string // "check" or "push", the verb for the checked line
+	Position   int
 }
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
@@ -76,6 +79,11 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			State:      stateClass(st.State),
 			StateLabel: stateLabel(st.State),
 			Checked:    checkedLine(m, st, now),
+			Kind:       kind(m),
+			Position:   m.Position,
+		}
+		if st.State != engine.Paused && !st.LastAt.IsZero() {
+			row.CheckedAt = st.LastAt.Unix()
 		}
 		switch st.State {
 		case engine.Down:
@@ -113,7 +121,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	})
 	content.Headline, content.State = headline(down, pending, active)
 	content.Count = plural(len(monitors), "monitor")
-	s.render(w, http.StatusOK, "dashboard.html", pageData{Content: content})
+	s.render(w, http.StatusOK, "dashboard.html", pageData{Content: content, Live: true, Down: down})
 }
 
 func headline(down, pending, active int) (string, string) {
@@ -192,19 +200,24 @@ func intervalLabel(secs int) string {
 	return fmt.Sprintf("%d seconds", secs)
 }
 
+// kind is the verb of a monitor's result line: "check" or "push".
+func kind(m store.Monitor) string {
+	if m.Type == store.TypePush {
+		return "push"
+	}
+	return "check"
+}
+
 // checkedLine is the muted text at the end of a row: "Checked 12 s ago".
+// live.js builds the same text in the browser.
 func checkedLine(m store.Monitor, st engine.Status, now time.Time) string {
 	switch {
 	case st.State == engine.Paused:
 		return "Paused"
-	case st.LastAt.IsZero() && m.Type == store.TypePush:
-		return "Waiting for the first push"
 	case st.LastAt.IsZero():
-		return "Waiting for the first check"
-	case m.Type == store.TypePush:
-		return "Pushed " + ago(now.Sub(st.LastAt))
+		return "Waiting for the first " + kind(m)
 	}
-	return "Checked " + ago(now.Sub(st.LastAt))
+	return capitalize(kind(m)) + "ed " + ago(now.Sub(st.LastAt))
 }
 
 // ago formats a duration as "12 s ago", "3 m ago", "2 h ago" or "3 d ago".
@@ -229,55 +242,7 @@ func plural(n int, word string) string {
 	return fmt.Sprintf("%d %ss", n, word)
 }
 
-// --- Detail ---
-
-type monitorContent struct {
-	M          store.Monitor
-	TypeLabel  string
-	Target     string
-	Interval   string
-	State      string
-	StateLabel string
-	LastLine   string
-	PushURL    string
-}
-
-func (s *Server) handleMonitor(w http.ResponseWriter, r *http.Request) {
-	m, ok := s.loadMonitor(w, r)
-	if !ok {
-		return
-	}
-	st := s.monitorStatus(m)
-	c := monitorContent{
-		M:          m,
-		TypeLabel:  typeLabels[m.Type],
-		Target:     m.Target,
-		Interval:   intervalLabel(m.IntervalS),
-		State:      stateClass(st.State),
-		StateLabel: stateLabel(st.State),
-		LastLine:   lastLine(m, st, time.Now()),
-	}
-	if m.Type == store.TypePush {
-		c.PushURL = s.pushURL(r, m.PushToken)
-	}
-	s.render(w, http.StatusOK, "monitor.html", pageData{Content: c})
-}
-
-// lastLine describes the newest result: "182 ms · checked 12 s ago" or
-// "HTTP 503 · checked 12 s ago".
-func lastLine(m store.Monitor, st engine.Status, now time.Time) string {
-	if st.State == engine.Paused || st.LastAt.IsZero() {
-		return checkedLine(m, st, now)
-	}
-	when := strings.ToLower(checkedLine(m, st, now))
-	if st.Last.OK {
-		if m.Type == store.TypePush {
-			return capitalize(when)
-		}
-		return fmt.Sprintf("%d ms · %s", st.Last.Latency.Milliseconds(), when)
-	}
-	return fmt.Sprintf("%s · %s", st.Last.Error, when)
-}
+// --- Detail helpers ---
 
 func (s *Server) pushURL(r *http.Request, token string) string {
 	base := s.baseURL

@@ -20,6 +20,10 @@ type pageData struct {
 	Error   string
 	Title   string
 	Message string
+	// Live makes the page open the SSE stream. Down is the number of
+	// monitors that are down, shown in the tab title.
+	Live bool
+	Down int
 	// Content carries page-specific data.
 	Content any
 }

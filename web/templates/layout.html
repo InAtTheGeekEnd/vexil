@@ -4,14 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<title>{{block "title" .}}{{.Brand.Name}}{{end}}</title>
+<title>{{if .Down}}({{.Down}}) {{end}}{{block "title" .}}{{.Brand.Name}}{{end}}</title>
 <link rel="icon" href="{{asset "brand/logo.svg"}}" type="image/svg+xml">
 <link rel="stylesheet" href="{{asset "css/app.css"}}">
 <script src="{{asset "js/theme.js"}}"></script>
 <script src="{{asset "js/chart.js"}}" defer></script>
 <script src="{{asset "js/app.js"}}" defer></script>
+<script src="{{asset "js/live.js"}}" defer></script>
 </head>
-<body class="{{block "bodyclass" .}}{{end}}">
+<body class="{{block "bodyclass" .}}{{end}}"{{if .Live}} data-live data-down="{{.Down}}"{{end}}>
 {{block "body" .}}{{end}}
 </body>
 </html>{{end}}

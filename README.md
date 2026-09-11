@@ -35,6 +35,10 @@ sysctl -w net.ipv4.ping_group_range="0 2147483647"
 
 In Docker add `--sysctl net.ipv4.ping_group_range="0 2147483647"` to `docker run`. For systemd put the sysctl in `/etc/sysctl.d/`.
 
+### Use HTTPS for real installs
+
+Every open vexil tab keeps one live connection to the server for updates. Over plain HTTP a browser allows only 6 connections to one server, so several open tabs can block each other. Put vexil behind a reverse proxy with HTTPS. HTTP/2 lifts the limit.
+
 ### Backup
 
 Copy the data folder. It holds everything.
