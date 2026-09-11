@@ -429,7 +429,7 @@ On failure, the failed part shows a short reason, for example `"database": "lock
 
 - The browser opens one SSE connection to `/events`.
 - Events: `check` (monitor id, ok, latency), `state` (monitor id, new state).
-- The favicon changes color with the overall status (green, red).
+- The favicon changes color with the overall status (green, red). An uploaded logo is drawn on a canvas with a red dot in the bottom right corner while one or more monitors are down, and shown as it is when all are up.
 - The tab title shows the count of down monitors: "(2) vexil".
 
 ---

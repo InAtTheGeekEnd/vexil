@@ -11,6 +11,10 @@
   var lastLine = document.getElementById("last-line");
   var baseTitle = document.title.replace(/^\(\d+\) /, "");
   var icon = document.querySelector("link[rel=icon]");
+  // The URL of an uploaded logo, "" when the built-in icon is in use.
+  var logo = icon && icon.hasAttribute("data-custom") ? icon.getAttribute("href") : "";
+  var logoImage = null;
+  var down = 0;
 
   // --- Tab title and favicon ---
 
@@ -26,10 +30,53 @@
     return "data:image/svg+xml," + encodeURIComponent(svg);
   }
 
+  // markedLogo returns the uploaded logo with a red dot in the bottom right
+  // corner as a PNG data URL, or "" until the logo has loaded.
+  function markedLogo() {
+    if (!logoImage) {
+      logoImage = new Image();
+      logoImage.onload = setIcon;
+      logoImage.src = logo;
+      return "";
+    }
+    if (!logoImage.complete) return "";
+    var size = 64;
+    var canvas = document.createElement("canvas");
+    canvas.width = canvas.height = size;
+    var ctx = canvas.getContext("2d");
+    // An SVG without a size reports no natural size. Fill the square then.
+    var iw = logoImage.naturalWidth || size, ih = logoImage.naturalHeight || size;
+    var scale = Math.min(size / iw, size / ih);
+    var w = iw * scale, h = ih * scale;
+    var r = size / 5;
+    try {
+      ctx.drawImage(logoImage, (size - w) / 2, (size - h) / 2, w, h);
+      ctx.beginPath();
+      ctx.arc(size - r, size - r, r, 0, 2 * Math.PI);
+      ctx.fillStyle = token("--down");
+      ctx.fill();
+      ctx.lineWidth = size / 32;
+      ctx.strokeStyle = token("--bg");
+      ctx.stroke();
+      return canvas.toDataURL("image/png");
+    } catch (e) {
+      return "";
+    }
+  }
+
+  function setIcon() {
+    if (!icon) return;
+    if (!logo) {
+      icon.setAttribute("href", favicon(token(down > 0 ? "--down" : "--up")));
+      return;
+    }
+    icon.setAttribute("href", (down > 0 && markedLogo()) || logo);
+  }
+
   function setDown(n) {
+    down = n;
     document.title = (n > 0 ? "(" + n + ") " : "") + baseTitle;
-    // An uploaded logo is used as it is, so only the built-in icon changes color.
-    if (icon && !icon.hasAttribute("data-custom")) icon.setAttribute("href", favicon(token(n > 0 ? "--down" : "--up")));
+    setIcon();
   }
   setDown(+body.dataset.down || 0);
 
