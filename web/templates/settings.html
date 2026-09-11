@@ -1,0 +1,64 @@
+{{define "title"}}Settings · {{.Brand.Name}}{{end}}
+{{define "body"}}
+{{template "header" .}}
+<main class="container page page-narrow">
+  {{if .Notice}}<p class="alert alert-ok" role="status">{{.Notice}}</p>{{end}}
+  {{if .Error}}<p class="alert alert-error" role="alert">{{.Error}}</p>{{end}}
+{{with .Content}}
+  <div class="page-head">
+    <div>
+      <h1 class="t-28">Settings</h1>
+      <p class="muted">Make it yours. The public page is at <a href="/status">/status</a>.</p>
+    </div>
+  </div>
+
+  <form method="post" action="/settings" enctype="multipart/form-data" class="stack" novalidate>
+    <div class="card stack">
+      <div class="card-title">Brand</div>
+      <label class="field{{if index .Errors "name"}} invalid{{end}}">
+        <span>Product name</span>
+        <input type="text" name="name" value="{{.Name}}" maxlength="40" autocomplete="off" required>
+        {{with index .Errors "name"}}<span class="error">{{.}}</span>{{else}}<span class="hint">Shown in the header, page titles, emails and alerts.</span>{{end}}
+      </label>
+      <div class="field{{if index .Errors "logo"}} invalid{{end}}">
+        <span>Logo</span>
+        <div class="logo-row">
+          <span class="logo-preview" aria-hidden="true">{{template "logo" $}}</span>
+          <input type="file" name="logo" id="logo" accept="image/svg+xml,image/png,.svg,.png">
+          {{if .LogoURL}}<button type="submit" class="btn btn-secondary btn-sm" formaction="/settings/logo/delete" formenctype="application/x-www-form-urlencoded" formnovalidate>Remove</button>{{end}}
+        </div>
+        {{with index .Errors "logo"}}<span class="error">{{.}}</span>{{else}}<span class="hint">SVG or PNG, up to 512 KB. It is also the browser tab icon.</span>{{end}}
+      </div>
+      <label class="field field-short{{if index .Errors "accent"}} invalid{{end}}">
+        <span>Accent color</span>
+        <span class="color-row"><input type="color" name="accent" value="{{.Accent}}"><code>{{.Accent}}</code></span>
+        {{with index .Errors "accent"}}<span class="error">{{.}}</span>{{else}}<span class="hint">Buttons, links and charts. The text on buttons turns black or white to stay readable.</span>{{end}}
+      </label>
+      <label class="check"><input type="checkbox" name="powered_by" value="1"{{if .PoweredBy}} checked{{end}}> Show the "Powered by" line in the footer</label>
+    </div>
+    <div class="row">
+      <button type="submit" class="btn btn-primary">Save</button>
+    </div>
+  </form>
+
+  <form method="post" action="/settings/password" class="stack mt-24" novalidate>
+    <div class="card stack">
+      <div class="card-title">Password</div>
+      <label class="field{{if index .Errors "password"}} invalid{{end}}">
+        <span>New password</span>
+        <input type="password" name="password" autocomplete="new-password" minlength="10" required>
+      </label>
+      <label class="field{{if index .Errors "password"}} invalid{{end}}">
+        <span>Repeat new password</span>
+        <input type="password" name="confirm" autocomplete="new-password" minlength="10" required>
+        {{with index .Errors "password"}}<span class="error">{{.}}</span>{{else}}<span class="hint">At least 10 characters. Every other session is logged out.</span>{{end}}
+      </label>
+    </div>
+    <div class="row">
+      <button type="submit" class="btn btn-secondary">Change password</button>
+    </div>
+  </form>
+{{end}}
+</main>
+{{template "footer" .}}
+{{end}}

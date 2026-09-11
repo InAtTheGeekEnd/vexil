@@ -28,7 +28,8 @@
 
   function setDown(n) {
     document.title = (n > 0 ? "(" + n + ") " : "") + baseTitle;
-    if (icon) icon.setAttribute("href", favicon(token(n > 0 ? "--down" : "--up")));
+    // An uploaded logo is used as it is, so only the built-in icon changes color.
+    if (icon && !icon.hasAttribute("data-custom")) icon.setAttribute("href", favicon(token(n > 0 ? "--down" : "--up")));
   }
   setDown(+body.dataset.down || 0);
 

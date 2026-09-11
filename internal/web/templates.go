@@ -17,11 +17,13 @@ import (
 // pageData is the data every template receives.
 type pageData struct {
 	Brand   brand.Brand
+	Logo    string // URL of the uploaded logo, "" for the built-in one
+	Theme   string // URL of the accent style sheet
 	Error   string
 	Notice  string // a green line at the top of the page
 	Title   string
 	Message string
-	Nav     string // the active nav item: "dashboard" or "notifications"
+	Nav     string // the active nav item: "dashboard", "notifications" or "settings"
 	// Live makes the page open the SSE stream. Down is the number of
 	// monitors that are down, shown in the tab title.
 	Live bool
@@ -91,7 +93,8 @@ func (s *Server) render(w http.ResponseWriter, status int, name string, data pag
 		return
 	}
 	if data.Brand.Name == "" {
-		data.Brand = s.brand
+		b := s.currentBrand()
+		data.Brand, data.Logo, data.Theme = b.Brand, b.LogoURL, b.ThemeURL
 	}
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, "layout", data); err != nil {

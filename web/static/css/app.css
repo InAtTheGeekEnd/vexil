@@ -249,7 +249,7 @@ svg { display: block; }
 .btn:hover { text-decoration: none; }
 .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .btn:disabled, .btn[aria-disabled="true"] { opacity: 0.5; cursor: not-allowed; }
-.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary { background: var(--accent); color: var(--on-accent, #fff); }
 .btn-primary:hover { background: var(--accent-hover); }
 .btn-secondary { background: transparent; color: var(--text); border-color: var(--border); }
 .btn-secondary:hover { border-color: var(--muted); }
@@ -840,3 +840,56 @@ body.auth { align-items: center; justify-content: center; padding: 24px 16px; }
 .chip-warn { background: var(--warn); }
 .chip-down { background: var(--down); }
 .chip-paused { background: var(--paused); }
+
+/* --- Settings --- */
+
+.mt-24 { margin-top: 24px; }
+.logo-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.logo-preview {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.logo-preview .brand-logo { width: 24px; height: 24px; }
+img.brand-logo { object-fit: contain; }
+.field input[type="file"] {
+  flex: 1 1 200px;
+  width: auto;
+  height: auto;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.field input[type="file"]::file-selector-button {
+  height: 22px;
+  padding: 0 10px;
+  margin-right: 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.color-row { display: flex; align-items: center; gap: 12px; }
+.color-row code { font-size: 13px; }
+.field input[type="color"] {
+  width: 56px;
+  height: 40px;
+  padding: 4px;
+  flex: none;
+  cursor: pointer;
+}
+.field input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+.field input[type="color"]::-webkit-color-swatch { border: 0; border-radius: 4px; }
+.field input[type="color"]::-moz-color-swatch { border: 0; border-radius: 4px; }
+.badge { height: 20px; width: auto; display: block; }
+

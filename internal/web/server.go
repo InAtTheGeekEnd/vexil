@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/InAtTheGeekEnd/vexil/internal/brand"
@@ -23,7 +24,8 @@ import (
 
 // Options configures a Server.
 type Options struct {
-	// Brand is the product identity. Zero value means brand.Default.
+	// Brand is the product identity used until the user saves one in
+	// Settings. Zero value means brand.Default.
 	Brand brand.Brand
 	// Log receives access and error logs. Nil means slog.Default().
 	Log *slog.Logger
@@ -40,7 +42,8 @@ type Options struct {
 // Server holds the handlers and their dependencies.
 type Server struct {
 	store      *store.Store
-	brand      brand.Brand
+	defaults   brand.Brand // the brand before any setting is saved
+	brand      atomic.Pointer[brandState]
 	log        *slog.Logger
 	tmpl       map[string]*template.Template
 	engine     *engine.Engine
@@ -61,7 +64,7 @@ func New(st *store.Store, opts Options) (*Server, error) {
 	}
 	s := &Server{
 		store:      st,
-		brand:      opts.Brand,
+		defaults:   opts.Brand,
 		log:        opts.Log,
 		tmpl:       tmpl,
 		engine:     opts.Engine,
@@ -70,11 +73,14 @@ func New(st *store.Store, opts Options) (*Server, error) {
 		loginLimit: newRateLimiter(5, time.Minute),
 		closing:    make(chan struct{}),
 	}
-	if s.brand.Name == "" {
-		s.brand = brand.Default
+	if s.defaults.Name == "" {
+		s.defaults = brand.Default
 	}
 	if s.log == nil {
 		s.log = slog.Default()
+	}
+	if err := s.loadBrand(context.Background()); err != nil {
+		return nil, err
 	}
 	s.handler = s.routes()
 	return s, nil
@@ -92,6 +98,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
 	mux.HandleFunc("GET /push/{token}", s.handlePush)
 	mux.HandleFunc("POST /push/{token}", s.handlePush)
+	mux.HandleFunc("GET /brand/logo", s.handleLogo)
+	mux.HandleFunc("GET /brand/theme.css", s.handleTheme)
 
 	static, err := fs.Sub(assets.Static, "static")
 	if err != nil {
@@ -126,6 +134,10 @@ func (s *Server) routes() http.Handler {
 		"POST /notifications/{id}/toggle": s.handleChannelToggle,
 		"POST /notifications/{id}/test":   s.handleChannelTest,
 		"POST /notifications/{id}/delete": s.handleChannelDelete,
+		"GET /settings":                   s.handleSettings,
+		"POST /settings":                  s.handleSettingsSave,
+		"POST /settings/logo/delete":      s.handleLogoDelete,
+		"POST /settings/password":         s.handlePasswordChange,
 	}
 	for pattern, h := range admin {
 		mux.Handle(pattern, s.requireAdmin(h))

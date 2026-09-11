@@ -5,19 +5,21 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>{{if .Down}}({{.Down}}) {{end}}{{block "title" .}}{{.Brand.Name}}{{end}}</title>
-<link rel="icon" href="{{asset "brand/logo.svg"}}" type="image/svg+xml">
+{{if .Logo}}<link rel="icon" href="{{.Logo}}" data-custom>{{else}}<link rel="icon" href="{{asset "brand/logo.svg"}}" type="image/svg+xml">{{end}}
 <link rel="stylesheet" href="{{asset "css/app.css"}}">
+<link rel="stylesheet" href="{{.Theme}}">
 <script src="{{asset "js/theme.js"}}"></script>
 <script src="{{asset "js/chart.js"}}" defer></script>
 <script src="{{asset "js/app.js"}}" defer></script>
 <script src="{{asset "js/live.js"}}" defer></script>
+{{block "head" .}}{{end}}
 </head>
 <body class="{{block "bodyclass" .}}{{end}}"{{if .Live}} data-live data-down="{{.Down}}"{{end}}>
 {{block "body" .}}{{end}}
 </body>
 </html>{{end}}
 
-{{define "logo"}}<svg class="brand-logo" width="22" height="22" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect x="6" y="3" width="2.5" height="26" rx="1.25" fill="currentColor"/><rect x="3" y="7" width="26" height="2.5" rx="1.25" fill="currentColor"/><path d="M10 11h15v13l-3.75-2.4L17.5 24l-3.75-2.4L10 24z" fill="var(--accent)"/></svg>{{end}}
+{{define "logo"}}{{if .Logo}}<img class="brand-logo" src="{{.Logo}}" alt="" width="22" height="22">{{else}}<svg class="brand-logo" width="22" height="22" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect x="6" y="3" width="2.5" height="26" rx="1.25" fill="currentColor"/><rect x="3" y="7" width="26" height="2.5" rx="1.25" fill="currentColor"/><path d="M10 11h15v13l-3.75-2.4L17.5 24l-3.75-2.4L10 24z" fill="var(--accent)"/></svg>{{end}}{{end}}
 
 {{define "header"}}<header class="topbar">
   <div class="container topbar-inner">
@@ -25,6 +27,7 @@
     <nav class="nav" aria-label="Main">
       <a href="/"{{if eq .Nav "dashboard"}} aria-current="page"{{end}}>Dashboard</a>
       <a href="/notifications"{{if eq .Nav "notifications"}} aria-current="page"{{end}}>Notifications</a>
+      <a href="/settings"{{if eq .Nav "settings"}} aria-current="page"{{end}}>Settings</a>
     </nav>
     <form method="post" action="/logout" class="inline">
       <button type="submit" class="btn btn-ghost btn-sm">Log out</button>
