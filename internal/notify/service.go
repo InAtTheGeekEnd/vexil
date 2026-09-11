@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,7 +23,7 @@ const sendTimeout = 15 * time.Second
 // Options configures a Service.
 type Options struct {
 	Log     *slog.Logger // nil means slog.Default()
-	Brand   string       // product name for email
+	Brand   string       // product name when none is saved in the settings
 	BaseURL string       // public URL for links, "" means no links
 	Client  *http.Client // nil means a client with a timeout
 }
@@ -88,13 +89,23 @@ func (s *Service) Notify(ctx context.Context, ev engine.Event) {
 // Wait blocks until every delivery in progress has ended. Tests use it.
 func (s *Service) Wait() { s.wg.Wait() }
 
+// brandName returns the product name from the settings, or the default
+// from Options when none is saved.
+func (s *Service) brandName(ctx context.Context) string {
+	name, err := s.store.GetSetting(ctx, store.SettingBrandName)
+	if err != nil || strings.TrimSpace(name) == "" {
+		return s.brand
+	}
+	return name
+}
+
 // message fills a Message from an event.
 func (s *Service) message(ctx context.Context, ev engine.Event) (Message, error) {
 	mon, err := s.store.Monitor(ctx, ev.MonitorID)
 	if err != nil {
 		return Message{}, err
 	}
-	m := Message{Monitor: mon, At: ev.At, Brand: s.brand}
+	m := Message{Monitor: mon, At: ev.At, Brand: s.brandName(ctx)}
 	if s.baseURL != "" {
 		m.URL = fmt.Sprintf("%s/monitors/%d", s.baseURL, mon.ID)
 	}
@@ -165,7 +176,8 @@ func (s *Service) Test(ctx context.Context, c store.Channel) error {
 	if err != nil {
 		return err
 	}
-	m := Message{Kind: KindTest, Monitor: store.Monitor{Name: s.brand}, At: time.Now(), Brand: s.brand}
+	name := s.brandName(ctx)
+	m := Message{Kind: KindTest, Monitor: store.Monitor{Name: name}, At: time.Now(), Brand: name}
 	if s.baseURL != "" {
 		m.URL = s.baseURL + "/notifications"
 	}

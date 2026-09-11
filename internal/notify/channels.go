@@ -23,6 +23,7 @@ func (s *slack) Send(ctx context.Context, m Message) error {
 		"title":    m.Title(),
 		"text":     strings.Join(m.Lines(), "\n"),
 		"fallback": m.Text(),
+		"footer":   m.Brand,
 	}
 	if m.URL != "" {
 		attachment["title_link"] = m.URL
@@ -43,6 +44,7 @@ func (d *discord) Send(ctx context.Context, m Message) error {
 		"title":       m.Title(),
 		"description": strings.Join(m.Lines(), "\n"),
 		"color":       color,
+		"footer":      map[string]any{"text": m.Brand},
 	}
 	if m.URL != "" {
 		embed["url"] = m.URL

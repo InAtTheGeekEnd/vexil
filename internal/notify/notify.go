@@ -35,7 +35,7 @@ type Message struct {
 	DownFor    time.Duration // UP: length of the incident, 0 when unknown
 	CertExpiry time.Time     // KindCert
 	URL        string        // link to the detail page, "" without a base URL
-	Brand      string        // product name for email
+	Brand      string        // product name for the test title and footers
 }
 
 // Title is the first line: "🔴 API is down".

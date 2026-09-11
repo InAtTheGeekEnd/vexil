@@ -24,7 +24,7 @@ func newTestService(t *testing.T) (*Service, *store.Store, *[]time.Duration) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	s := NewService(st, Options{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Brand: "vexil", BaseURL: "https://status.example.com"})
+	s := NewService(st, Options{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Brand: "Acme Watch", BaseURL: "https://status.example.com"})
 	slept := &[]time.Duration{}
 	s.sleep = func(ctx context.Context, d time.Duration) bool {
 		*slept = append(*slept, d)
@@ -117,7 +117,7 @@ func TestMessageFromEvent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if up.Kind != KindUp || up.DownFor != 4*time.Minute+12*time.Second || up.URL != "https://status.example.com/monitors/"+strconv.FormatInt(m.ID, 10) || up.Brand != "vexil" {
+	if up.Kind != KindUp || up.DownFor != 4*time.Minute+12*time.Second || up.URL != "https://status.example.com/monitors/"+strconv.FormatInt(m.ID, 10) || up.Brand != "Acme Watch" {
 		t.Fatalf("up message = %+v", up)
 	}
 	expiry := testAt.Add(10 * 24 * time.Hour)
@@ -137,12 +137,30 @@ func TestTest(t *testing.T) {
 	if err := s.Test(context.Background(), c); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(cap.body, "Test message from vexil") {
+	if !strings.Contains(cap.body, "Test message from Acme Watch") {
 		t.Fatalf("body = %s", cap.body)
 	}
 	cap.status = http.StatusNotFound
 	err := s.Test(context.Background(), c)
 	if err == nil || err.Error() != "HTTP 404" {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestBrandNameComesFromSettings(t *testing.T) {
+	s, st, _ := newTestService(t)
+	ts, cap := newCapture(t)
+	if err := st.SetSetting(context.Background(), store.SettingBrandName, "Northwind Status"); err != nil {
+		t.Fatal(err)
+	}
+	c := store.Channel{Type: store.ChannelSlack, Config: map[string]string{"url": ts.URL + "/services/SECRET"}}
+	if err := s.Test(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(cap.body, "Test message from Northwind Status") || !strings.Contains(cap.body, `"footer":"Northwind Status"`) {
+		t.Fatalf("body = %s", cap.body)
+	}
+	if strings.Contains(cap.body, "Acme Watch") {
+		t.Fatal("the default name was used although a brand name is saved")
 	}
 }

@@ -48,8 +48,8 @@ func TestMessageText(t *testing.T) {
 		},
 		{
 			name: "test",
-			m:    Message{Kind: KindTest, Brand: "vexil", At: testAt},
-			want: "🔔 Test message from vexil\nThis channel works.",
+			m:    Message{Kind: KindTest, Brand: "Acme Watch", At: testAt},
+			want: "🔔 Test message from Acme Watch\nThis channel works.",
 		},
 	}
 	for _, tc := range tests {
