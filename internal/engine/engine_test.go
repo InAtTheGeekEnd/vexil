@@ -500,9 +500,7 @@ func TestCertificateWarning(t *testing.T) {
 		waitFor(t, events, 3*time.Second, func(ev Event) bool { return ev.MonitorID == m.ID && ev.Result.OK })
 	}
 	env.engine.Stop()
-	if got := count(env.notifier.alerts(), AlertCert); got != 1 {
-		t.Fatalf("cert alerts after three checks = %d, want 1", got)
-	}
+	waitAlerts(t, env.notifier, AlertCert, 1)
 	saved, _ := env.store.Monitor(ctx, m.ID)
 	if !saved.CertWarnedAt.Equal(soon) {
 		t.Fatalf("CertWarnedAt = %v, want %v", saved.CertWarnedAt, soon)
@@ -541,8 +539,22 @@ func TestCertificateWarning(t *testing.T) {
 	checker.mu.Unlock()
 	waitFor(t, events2, 3*time.Second, func(ev Event) bool { return ev.MonitorID == m.ID && ev.Result.CertExpiry.Equal(nearly) })
 	env2.engine.Stop()
-	if got := count(env2.notifier.alerts(), AlertCert); got != 1 {
-		t.Fatalf("cert alerts for the next expiry = %d, want 1", got)
+	waitAlerts(t, env2.notifier, AlertCert, 1)
+}
+
+// waitAlerts polls until the notifier has want alerts of a kind. Notify
+// runs in its own goroutine, so a count right after an event can be early.
+func waitAlerts(t *testing.T, n *recordingNotifier, kind Alert, want int) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if got := count(n.alerts(), kind); got == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("alerts of kind %v = %d, want %d", kind, count(n.alerts(), kind), want)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
