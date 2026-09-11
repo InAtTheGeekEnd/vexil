@@ -151,6 +151,7 @@ func (s *Server) routes() http.Handler {
 
 	csrf := http.NewCrossOriginProtection()
 	var h http.Handler = csrf.Handler(mux)
+	h = compress(h)
 	h = s.accessLog(h)
 	h = securityHeaders(h)
 	return h
