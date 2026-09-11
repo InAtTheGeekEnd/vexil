@@ -22,25 +22,39 @@
     });
   });
 
-  // Monitor form: switch the fields with the type and fill the name from
-  // the target until the user types a name.
-  var form = document.getElementById("monitor-form");
+  // Forms with type cards show only the fields of the chosen type.
+  var form = document.querySelector("form[data-type]");
   if (form) {
-    var name = form.querySelector("[name=name]");
-    var typed = name.value !== "";
     form.addEventListener("change", function (e) {
       if (e.target.name === "type") {
         form.dataset.type = e.target.value;
-        var first = form.querySelector(".for-" + e.target.value + " input");
+        var first = form.querySelector(".for-" + e.target.value + " input:not([hidden])");
         if (first) first.focus();
       }
     });
+  }
+
+  // Monitor form: fill the name from the target until the user types a name.
+  if (form && form.id === "monitor-form") {
+    var name = form.querySelector("[name=name]");
+    var typed = name.value !== "";
     name.addEventListener("input", function () { typed = name.value !== ""; });
     form.addEventListener("input", function (e) {
       if (typed || !e.target.hasAttribute("data-target")) return;
       name.value = hostOf(e.target.value);
     });
   }
+
+  // Channel form: a saved secret shows as dots until the user clicks Replace.
+  document.addEventListener("click", function (e) {
+    var btn = e.target.closest("[data-replace]");
+    if (!btn) return;
+    var wrap = btn.closest(".secret");
+    var input = wrap.nextElementSibling;
+    wrap.hidden = true;
+    input.hidden = false;
+    input.focus();
+  });
 
   function hostOf(v) {
     v = v.trim();

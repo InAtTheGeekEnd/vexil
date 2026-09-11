@@ -121,7 +121,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	})
 	content.Headline, content.State = headline(down, pending, active)
 	content.Count = plural(len(monitors), "monitor")
-	s.render(w, http.StatusOK, "dashboard.html", pageData{Content: content, Live: true, Down: down})
+	s.render(w, http.StatusOK, "dashboard.html", pageData{Content: content, Live: true, Down: down, Nav: "dashboard"})
 }
 
 func headline(down, pending, active int) (string, string) {

@@ -16,6 +16,7 @@ import (
 
 	"github.com/InAtTheGeekEnd/vexil/internal/brand"
 	"github.com/InAtTheGeekEnd/vexil/internal/engine"
+	"github.com/InAtTheGeekEnd/vexil/internal/notify"
 	"github.com/InAtTheGeekEnd/vexil/internal/store"
 	assets "github.com/InAtTheGeekEnd/vexil/web"
 )
@@ -38,6 +39,9 @@ func newTestServer(t *testing.T, opts Options) (*Server, *store.Store) {
 			t.Fatalf("engine.Start: %v", err)
 		}
 		t.Cleanup(opts.Engine.Stop)
+	}
+	if opts.Notifier == nil {
+		opts.Notifier = notify.NewService(st, notify.Options{Log: opts.Log, Brand: brand.Default.Name})
 	}
 	s, err := New(st, opts)
 	if err != nil {

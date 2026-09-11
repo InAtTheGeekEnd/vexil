@@ -16,6 +16,7 @@ import (
 
 	"github.com/InAtTheGeekEnd/vexil/internal/brand"
 	"github.com/InAtTheGeekEnd/vexil/internal/engine"
+	"github.com/InAtTheGeekEnd/vexil/internal/notify"
 	"github.com/InAtTheGeekEnd/vexil/internal/store"
 	assets "github.com/InAtTheGeekEnd/vexil/web"
 )
@@ -32,6 +33,8 @@ type Options struct {
 	// BaseURL is the public URL of the server without a trailing slash. It
 	// builds push URLs. Empty means use the host of the request.
 	BaseURL string
+	// Notifier sends test messages. Nil disables the Send test button.
+	Notifier *notify.Service
 }
 
 // Server holds the handlers and their dependencies.
@@ -41,6 +44,7 @@ type Server struct {
 	log        *slog.Logger
 	tmpl       map[string]*template.Template
 	engine     *engine.Engine
+	notifier   *notify.Service
 	baseURL    string
 	loginLimit *rateLimiter
 	handler    http.Handler
@@ -61,6 +65,7 @@ func New(st *store.Store, opts Options) (*Server, error) {
 		log:        opts.Log,
 		tmpl:       tmpl,
 		engine:     opts.Engine,
+		notifier:   opts.Notifier,
 		baseURL:    strings.TrimRight(opts.BaseURL, "/"),
 		loginLimit: newRateLimiter(5, time.Minute),
 		closing:    make(chan struct{}),
@@ -104,15 +109,23 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /styleguide", s.requireAdmin(http.HandlerFunc(s.handleStyleguide)))
 	mux.Handle("GET /events", s.requireAdmin(http.HandlerFunc(s.handleEvents)))
 	admin := map[string]http.HandlerFunc{
-		"GET /monitors/new":          s.handleMonitorNewForm,
-		"POST /monitors/new":         s.handleMonitorCreate,
-		"POST /monitors/reorder":     s.handleReorder,
-		"GET /monitors/{id}":         s.handleMonitor,
-		"GET /monitors/{id}/edit":    s.handleMonitorEditForm,
-		"POST /monitors/{id}/edit":   s.handleMonitorUpdate,
-		"POST /monitors/{id}/pause":  s.handleMonitorPause,
-		"POST /monitors/{id}/resume": s.handleMonitorResume,
-		"POST /monitors/{id}/delete": s.handleMonitorDelete,
+		"GET /monitors/new":               s.handleMonitorNewForm,
+		"POST /monitors/new":              s.handleMonitorCreate,
+		"POST /monitors/reorder":          s.handleReorder,
+		"GET /monitors/{id}":              s.handleMonitor,
+		"GET /monitors/{id}/edit":         s.handleMonitorEditForm,
+		"POST /monitors/{id}/edit":        s.handleMonitorUpdate,
+		"POST /monitors/{id}/pause":       s.handleMonitorPause,
+		"POST /monitors/{id}/resume":      s.handleMonitorResume,
+		"POST /monitors/{id}/delete":      s.handleMonitorDelete,
+		"GET /notifications":              s.handleChannels,
+		"GET /notifications/new":          s.handleChannelNewForm,
+		"POST /notifications/new":         s.handleChannelCreate,
+		"GET /notifications/{id}/edit":    s.handleChannelEditForm,
+		"POST /notifications/{id}/edit":   s.handleChannelUpdate,
+		"POST /notifications/{id}/toggle": s.handleChannelToggle,
+		"POST /notifications/{id}/test":   s.handleChannelTest,
+		"POST /notifications/{id}/delete": s.handleChannelDelete,
 	}
 	for pattern, h := range admin {
 		mux.Handle(pattern, s.requireAdmin(h))

@@ -1,0 +1,61 @@
+{{define "title"}}{{if .Content.ID}}Edit {{.Content.Name}}{{else}}Add channel{{end}} · {{.Brand.Name}}{{end}}
+{{define "body"}}
+{{template "header" .}}
+<main class="container page page-narrow">
+{{with .Content}}
+  <p class="crumbs small"><a href="/notifications">Notifications</a></p>
+  <div class="page-head">
+    <div>
+      <h1 class="t-28">{{if .ID}}Edit channel{{else}}Add channel{{end}}</h1>
+      <p class="muted">{{if .ID}}The type cannot change. Delete the channel and add a new one to change it.{{else}}Choose where alerts go, fill in the details, and save. Then send a test.{{end}}</p>
+    </div>
+  </div>
+  {{with index .Errors "type"}}<p class="alert alert-error" role="alert">{{.}}</p>{{end}}
+  <form method="post" action="{{if .ID}}/notifications/{{.ID}}/edit{{else}}/notifications/new{{end}}" class="type-form stack" data-type="{{.Type}}" novalidate>
+    {{if .ID}}
+    <input type="hidden" name="type" value="{{.Type}}">
+    {{else}}
+    <fieldset class="type-cards">
+      <legend class="sr-only">Channel type</legend>
+      {{$sel := .Type}}{{range .Types}}
+      <label class="type-card"><input type="radio" name="type" value="{{.Type}}"{{if eq .Type $sel}} checked{{end}}><span class="type-card-body">
+        {{template "chan-icon" .Type}}
+        <span class="type-name">{{.Label}}</span><span class="muted small">{{.Description}}</span></span></label>
+      {{end}}
+    </fieldset>
+    {{end}}
+
+    <div class="card stack">
+      {{$f := .}}
+      {{range .Types}}{{$t := .Type}}{{if or (not $f.ID) (eq $t $f.Type)}}
+      <div class="for-{{$t}} stack">
+        {{range index $f.Fields $t}}
+        <label class="field{{if index $f.Errors .Key}} invalid{{end}}{{if eq .Key "port"}} field-short{{end}}">
+          <span>{{.Label}}{{if not .Required}} <span class="muted">(optional)</span>{{end}}</span>
+          {{if and .Secret (index $f.HasKeys .Key)}}
+          <span class="secret"><span class="input secret-mask" aria-hidden="true">••••••••••••</span><button type="button" class="btn btn-secondary btn-sm" data-replace>Replace</button></span>
+          <input type="{{.Type}}" name="{{.Key}}" value="" autocomplete="off" spellcheck="false" hidden>
+          {{else}}
+          <input type="{{.Type}}" name="{{.Key}}" value="{{index $f.Values .Key}}" placeholder="{{.Placeholder}}" autocomplete="off" spellcheck="false"{{if eq .Key "port"}} min="1" max="65535" inputmode="numeric"{{end}}>
+          {{end}}
+          {{with index $f.Errors .Key}}<span class="error">{{.}}</span>{{else}}{{with .Hint}}<span class="hint">{{.}}</span>{{end}}{{end}}
+        </label>
+        {{end}}
+      </div>
+      {{end}}{{end}}
+
+      <label class="field">
+        <span>Name <span class="muted">(optional)</span></span>
+        <input type="text" name="name" value="{{.Name}}" placeholder="Filled from the type" autocomplete="off" maxlength="80">
+      </label>
+    </div>
+
+    <div class="row">
+      <button type="submit" class="btn btn-primary">{{if .ID}}Save changes{{else}}Add channel{{end}}</button>
+      <a class="btn btn-secondary" href="/notifications">Cancel</a>
+    </div>
+  </form>
+{{end}}
+</main>
+{{template "footer" .}}
+{{end}}

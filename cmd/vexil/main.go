@@ -20,6 +20,7 @@ import (
 	"github.com/InAtTheGeekEnd/vexil/internal/brand"
 	"github.com/InAtTheGeekEnd/vexil/internal/config"
 	"github.com/InAtTheGeekEnd/vexil/internal/engine"
+	"github.com/InAtTheGeekEnd/vexil/internal/notify"
 	"github.com/InAtTheGeekEnd/vexil/internal/store"
 	"github.com/InAtTheGeekEnd/vexil/internal/web"
 	"golang.org/x/term"
@@ -71,13 +72,14 @@ func serve(cfg config.Config, log *slog.Logger) error {
 	}
 	defer st.Close()
 
-	eng := engine.New(st, engine.Options{Log: log})
+	notifier := notify.NewService(st, notify.Options{Log: log, Brand: brand.Default.Name, BaseURL: cfg.BaseURL})
+	eng := engine.New(st, engine.Options{Log: log, Notifier: notifier})
 	if err := eng.Start(ctx); err != nil {
 		return err
 	}
 	defer eng.Stop()
 
-	srv, err := web.New(st, web.Options{Log: log, Engine: eng, BaseURL: cfg.BaseURL})
+	srv, err := web.New(st, web.Options{Log: log, Engine: eng, BaseURL: cfg.BaseURL, Notifier: notifier})
 	if err != nil {
 		return err
 	}

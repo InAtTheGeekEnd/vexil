@@ -1,0 +1,51 @@
+{{define "title"}}Notifications · {{.Brand.Name}}{{end}}
+{{define "body"}}
+{{template "header" .}}
+<main class="container page">
+  {{if .Notice}}<p class="alert alert-ok" role="status">{{.Notice}}</p>{{end}}
+  {{if .Error}}<p class="alert alert-error" role="alert">{{.Error}}</p>{{end}}
+{{with .Content}}
+{{if .Rows}}
+  <div class="page-head">
+    <div>
+      <h1 class="t-28">Notifications</h1>
+      <p class="muted">Every channel that is on gets every alert.</p>
+    </div>
+    <a class="btn btn-primary" href="/notifications/new">Add channel</a>
+  </div>
+  <ul class="channels">
+  {{range .Rows}}
+    <li class="chan-row{{if not .Enabled}} chan-off{{end}}">
+      <span class="chan-type">{{template "chan-icon" .Type}}</span>
+      <span class="chan-name">
+        <span class="w-600">{{.Name}}</span>
+        <span class="muted small">{{.TypeLabel}} · {{.Summary}}</span>
+        {{if .LastError}}<span class="chan-error small">{{.LastError}}</span>{{end}}
+      </span>
+      <form method="post" action="/notifications/{{.ID}}/toggle" class="inline chan-switch">
+        <button type="submit" class="switch" role="switch" aria-checked="{{if .Enabled}}true{{else}}false{{end}}" aria-label="{{.Name}} {{if .Enabled}}is on{{else}}is off{{end}}" title="{{if .Enabled}}Turn off{{else}}Turn on{{end}}"><span class="knob"></span></button>
+      </form>
+      <span class="row chan-actions">
+        <form method="post" action="/notifications/{{.ID}}/test" class="inline"><button type="submit" class="btn btn-secondary btn-sm">Send test</button></form>
+        <a class="btn btn-secondary btn-sm" href="/notifications/{{.ID}}/edit">Edit</a>
+        <form method="post" action="/notifications/{{.ID}}/delete" class="inline" data-confirm="Delete {{.Name}}?"><button type="submit" class="btn btn-danger btn-sm">Delete</button></form>
+      </span>
+    </li>
+  {{end}}
+  </ul>
+{{else}}
+  <div class="page-head">
+    <div>
+      <h1 class="t-28">Notifications</h1>
+      <p class="muted">Alerts go nowhere until you add a channel.</p>
+    </div>
+  </div>
+  <section class="empty">
+    <p class="lead">No channels yet.</p>
+    <a class="btn btn-primary" href="/notifications/new">Add your first channel</a>
+  </section>
+{{end}}
+{{end}}
+</main>
+{{template "footer" .}}
+{{end}}

@@ -18,8 +18,10 @@ import (
 type pageData struct {
 	Brand   brand.Brand
 	Error   string
+	Notice  string // a green line at the top of the page
 	Title   string
 	Message string
+	Nav     string // the active nav item: "dashboard" or "notifications"
 	// Live makes the page open the SSE stream. Down is the number of
 	// monitors that are down, shown in the tab title.
 	Live bool
