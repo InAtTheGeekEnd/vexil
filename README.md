@@ -101,4 +101,4 @@ The source code is released under the MIT license. See [LICENSE](LICENSE).
 
 The vexil name and the logo files in `web/static/brand/` are not covered by the MIT license. All rights reserved. See [web/static/brand/LICENSE](web/static/brand/LICENSE). You can replace the name and logo in the UI under Settings.
 
-The Inter font in `web/static/fonts/` is licensed under the SIL Open Font License. See [web/static/fonts/OFL.txt](web/static/fonts/OFL.txt).
+The Inter font in `web/static/fonts/` is licensed under the SIL Open Font License. See [web/static/fonts/OFL.txt](web/static/fonts/OFL.txt). The file is a Latin subset of Inter Variable, made with `pyftsubset` from fonttools. Inter declares no Reserved Font Name, so the subset keeps the name.
