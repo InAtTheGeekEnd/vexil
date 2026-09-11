@@ -182,9 +182,9 @@ func TestMonitorFormValidation(t *testing.T) {
 	if m.Target != "127.0.0.1:1" || m.Name != "127.0.0.1" || m.IntervalS != 30 {
 		t.Fatalf("tcp monitor = %+v", m)
 	}
-	res = postForm(t, c, ts.URL+"/monitors/new", url.Values{"type": {"dns"}, "hostname": {"localhost"}, "expected_ip": {"127.0.0.1"}, "interval": {"900"}})
+	res = postForm(t, c, ts.URL+"/monitors/new", url.Values{"type": {"dns"}, "hostname": {"localhost"}, "expected_ip": {"127.0.0.1"}, "interval": {"86400"}})
 	m, _ = st.Monitor(context.Background(), monitorID(t, res))
-	if m.Target != "localhost" || m.ExpectedIP != "127.0.0.1" {
+	if m.Target != "localhost" || m.ExpectedIP != "127.0.0.1" || m.IntervalS != 86400 {
 		t.Fatalf("dns monitor = %+v", m)
 	}
 }

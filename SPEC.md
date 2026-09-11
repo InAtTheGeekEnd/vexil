@@ -126,7 +126,7 @@ Only a person with access to the server can reset the password. This is the secu
 
 Five types. Each type has a small number of fields.
 
-All monitors have: **Name**, **Interval** (30s, 1m, 5m, 15m; default 1m), **Show on status page** (on/off, default off).
+All monitors have: **Name**, **Interval** (30s, 1m, 5m, 15m, 30m, 1h, 6h, 12h, 24h; default 1m), **Show on status page** (on/off, default off).
 
 ### 5.1 HTTP(S)
 
