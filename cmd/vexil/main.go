@@ -19,6 +19,7 @@ import (
 
 	"github.com/InAtTheGeekEnd/vexil/internal/brand"
 	"github.com/InAtTheGeekEnd/vexil/internal/config"
+	"github.com/InAtTheGeekEnd/vexil/internal/engine"
 	"github.com/InAtTheGeekEnd/vexil/internal/store"
 	"github.com/InAtTheGeekEnd/vexil/internal/web"
 	"golang.org/x/term"
@@ -70,7 +71,13 @@ func serve(cfg config.Config, log *slog.Logger) error {
 	}
 	defer st.Close()
 
-	srv, err := web.New(st, web.Options{Log: log})
+	eng := engine.New(st, engine.Options{Log: log})
+	if err := eng.Start(ctx); err != nil {
+		return err
+	}
+	defer eng.Stop()
+
+	srv, err := web.New(st, web.Options{Log: log, Engine: eng})
 	if err != nil {
 		return err
 	}

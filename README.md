@@ -25,6 +25,16 @@ vexil has three environment variables. Everything else is set in the UI.
 | `VEXIL_DATA` | `./data` | The folder for the SQLite file and uploads. |
 | `VEXIL_BASE_URL` | empty | The public URL. vexil uses it in notification links. |
 
+### Ping monitors
+
+vexil uses unprivileged ICMP (UDP) ping. On Linux the kernel must allow it for the group that runs vexil:
+
+```
+sysctl -w net.ipv4.ping_group_range="0 2147483647"
+```
+
+In Docker add `--sysctl net.ipv4.ping_group_range="0 2147483647"` to `docker run`. For systemd put the sysctl in `/etc/sysctl.d/`.
+
 ### Backup
 
 Copy the data folder. It holds everything.

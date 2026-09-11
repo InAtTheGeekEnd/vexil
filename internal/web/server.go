@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/InAtTheGeekEnd/vexil/internal/brand"
+	"github.com/InAtTheGeekEnd/vexil/internal/engine"
 	"github.com/InAtTheGeekEnd/vexil/internal/store"
 	assets "github.com/InAtTheGeekEnd/vexil/web"
 )
@@ -23,19 +24,20 @@ type Options struct {
 	Brand brand.Brand
 	// Log receives access and error logs. Nil means slog.Default().
 	Log *slog.Logger
-	// EngineReady reports whether the check engine runs. Nil means ready.
-	EngineReady func() error
+	// Engine is the running check engine. Nil means no engine, which makes
+	// /readyz fail and /push return 404.
+	Engine *engine.Engine
 }
 
 // Server holds the handlers and their dependencies.
 type Server struct {
-	store       *store.Store
-	brand       brand.Brand
-	log         *slog.Logger
-	tmpl        map[string]*template.Template
-	engineReady func() error
-	loginLimit  *rateLimiter
-	handler     http.Handler
+	store      *store.Store
+	brand      brand.Brand
+	log        *slog.Logger
+	tmpl       map[string]*template.Template
+	engine     *engine.Engine
+	loginLimit *rateLimiter
+	handler    http.Handler
 }
 
 // New builds a Server. It panics only through parseTemplates when the
@@ -46,21 +48,18 @@ func New(st *store.Store, opts Options) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{
-		store:       st,
-		brand:       opts.Brand,
-		log:         opts.Log,
-		tmpl:        tmpl,
-		engineReady: opts.EngineReady,
-		loginLimit:  newRateLimiter(5, time.Minute),
+		store:      st,
+		brand:      opts.Brand,
+		log:        opts.Log,
+		tmpl:       tmpl,
+		engine:     opts.Engine,
+		loginLimit: newRateLimiter(5, time.Minute),
 	}
 	if s.brand.Name == "" {
 		s.brand = brand.Default
 	}
 	if s.log == nil {
 		s.log = slog.Default()
-	}
-	if s.engineReady == nil {
-		s.engineReady = func() error { return nil }
 	}
 	s.handler = s.routes()
 	return s, nil
@@ -76,6 +75,8 @@ func (s *Server) routes() http.Handler {
 
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
+	mux.HandleFunc("GET /push/{token}", s.handlePush)
+	mux.HandleFunc("POST /push/{token}", s.handlePush)
 
 	static, err := fs.Sub(assets.Static, "static")
 	if err != nil {
@@ -151,7 +152,6 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 		body["status"] = "fail"
 		body["database"] = shortReason(err)
 	}
-	// TODO(milestone 3): report the real engine state.
 	if err := s.engineReady(); err != nil {
 		body["status"] = "fail"
 		body["engine"] = shortReason(err)
@@ -163,6 +163,35 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}
 	_ = json.NewEncoder(w).Encode(body)
+}
+
+func (s *Server) engineReady() error {
+	if s.engine == nil {
+		return errors.New("not started")
+	}
+	return s.engine.Ready()
+}
+
+// handlePush records a heartbeat for a push monitor. It needs no login: the
+// token is the secret.
+func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if s.engine == nil {
+		http.NotFound(w, r)
+		return
+	}
+	err := s.engine.Push(r.Context(), r.PathValue("token"))
+	if errors.Is(err, store.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		s.log.Error("push", "err", err)
+		http.Error(w, "could not record the push", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = w.Write([]byte("ok"))
 }
 
 func shortReason(err error) string {

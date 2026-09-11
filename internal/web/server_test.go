@@ -3,7 +3,6 @@ package web
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -13,8 +12,10 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/InAtTheGeekEnd/vexil/internal/brand"
+	"github.com/InAtTheGeekEnd/vexil/internal/engine"
 	"github.com/InAtTheGeekEnd/vexil/internal/store"
 	assets "github.com/InAtTheGeekEnd/vexil/web"
 )
@@ -30,6 +31,13 @@ func newTestServer(t *testing.T, opts Options) (*Server, *store.Store) {
 	t.Cleanup(func() { st.Close() })
 	if opts.Log == nil {
 		opts.Log = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	if opts.Engine == nil {
+		opts.Engine = engine.New(st, engine.Options{Log: opts.Log})
+		if err := opts.Engine.Start(context.Background()); err != nil {
+			t.Fatalf("engine.Start: %v", err)
+		}
+		t.Cleanup(opts.Engine.Stop)
 	}
 	s, err := New(st, opts)
 	if err != nil {
@@ -105,7 +113,8 @@ func TestHealthz(t *testing.T) {
 func TestReadyz(t *testing.T) {
 	tests := []struct {
 		name       string
-		engine     func() error
+		noEngine   bool
+		stopEngine bool
 		closeStore bool
 		wantStatus int
 		want       map[string]string
@@ -116,10 +125,16 @@ func TestReadyz(t *testing.T) {
 			want:       map[string]string{"status": "ok", "database": "ok", "engine": "ok"},
 		},
 		{
-			name:       "engine down",
-			engine:     func() error { return errors.New("not started") },
+			name:       "no engine",
+			noEngine:   true,
 			wantStatus: http.StatusServiceUnavailable,
 			want:       map[string]string{"status": "fail", "database": "ok", "engine": "not started"},
+		},
+		{
+			name:       "engine stopped",
+			stopEngine: true,
+			wantStatus: http.StatusServiceUnavailable,
+			want:       map[string]string{"status": "fail", "database": "ok", "engine": "stopped"},
 		},
 		{
 			name:       "database down",
@@ -130,7 +145,13 @@ func TestReadyz(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s, st := newTestServer(t, Options{EngineReady: tt.engine})
+			s, st := newTestServer(t, Options{})
+			if tt.noEngine {
+				s.engine = nil
+			}
+			if tt.stopEngine {
+				s.engine.Stop()
+			}
 			if tt.closeStore {
 				st.Close()
 			}
@@ -428,5 +449,46 @@ func TestStaticFontAndLogo(t *testing.T) {
 				t.Fatalf("%s: %d %q", tt.path, rec.Code, rec.Header().Get("Content-Type"))
 			}
 		})
+	}
+}
+
+func TestPushEndpoint(t *testing.T) {
+	s, st := newTestServer(t, Options{})
+	m := &store.Monitor{Name: "Backup", Type: store.TypePush, IntervalS: 3600}
+	if err := st.CreateMonitor(context.Background(), m); err != nil {
+		t.Fatal(err)
+	}
+	// The engine started before the monitor existed, so load it.
+	if err := s.engine.Reload(context.Background(), m.ID); err != nil {
+		t.Fatal(err)
+	}
+	events, stop := s.engine.Hub().Subscribe(8)
+	defer stop()
+
+	tests := []struct {
+		method string
+		token  string
+		want   int
+	}{
+		{http.MethodGet, m.PushToken, http.StatusOK},
+		{http.MethodPost, m.PushToken, http.StatusOK},
+		{http.MethodGet, "wrong-token", http.StatusNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.method+" "+tt.token, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			s.ServeHTTP(rec, httptest.NewRequest(tt.method, "/push/"+tt.token, nil))
+			if rec.Code != tt.want {
+				t.Fatalf("status = %d, want %d", rec.Code, tt.want)
+			}
+		})
+	}
+	select {
+	case ev := <-events:
+		if ev.MonitorID != m.ID || ev.State != engine.Up {
+			t.Fatalf("event = %+v", ev)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no event after push")
 	}
 }
