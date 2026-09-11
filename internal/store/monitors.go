@@ -183,3 +183,19 @@ func affected(res sql.Result) error {
 	}
 	return nil
 }
+
+// ReorderMonitors sets the display position of each monitor to its index in
+// ids. Monitors missing from ids keep their position.
+func (s *Store) ReorderMonitors(ctx context.Context, ids []int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for i, id := range ids {
+		if _, err := tx.ExecContext(ctx, `UPDATE monitors SET position = ? WHERE id = ?`, i+1, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
