@@ -32,6 +32,9 @@ type Monitor struct {
 	Paused     bool
 	Position   int
 	CreatedAt  time.Time
+	// CertWarnedAt is the expiry of the certificate that the expiry warning
+	// was sent for. Zero when no warning was sent.
+	CertWarnedAt time.Time
 }
 
 // Interval returns the check interval as a duration.
@@ -49,17 +52,20 @@ func NewPushToken() (string, error) {
 }
 
 const monitorCols = `id, name, type, target, COALESCE(keyword, ''), COALESCE(expected_ip, ''),
-	COALESCE(push_token, ''), interval_s, public, paused, position, created_at`
+	COALESCE(push_token, ''), interval_s, public, paused, position, created_at, COALESCE(cert_warned_at, 0)`
 
 func scanMonitor(row interface{ Scan(...any) error }) (Monitor, error) {
 	var m Monitor
-	var created int64
+	var created, warned int64
 	err := row.Scan(&m.ID, &m.Name, &m.Type, &m.Target, &m.Keyword, &m.ExpectedIP,
-		&m.PushToken, &m.IntervalS, &m.Public, &m.Paused, &m.Position, &created)
+		&m.PushToken, &m.IntervalS, &m.Public, &m.Paused, &m.Position, &created, &warned)
 	if errors.Is(err, sql.ErrNoRows) {
 		return m, ErrNotFound
 	}
 	m.CreatedAt = time.Unix(created, 0)
+	if warned != 0 {
+		m.CertWarnedAt = time.Unix(warned, 0)
+	}
 	return m, err
 }
 
@@ -113,6 +119,16 @@ func (s *Store) UpdateMonitor(ctx context.Context, m Monitor) error {
 // SetPaused pauses or resumes a monitor.
 func (s *Store) SetPaused(ctx context.Context, id int64, paused bool) error {
 	res, err := s.db.ExecContext(ctx, `UPDATE monitors SET paused = ? WHERE id = ?`, paused, id)
+	if err != nil {
+		return err
+	}
+	return affected(res)
+}
+
+// SetCertWarned records that the expiry warning for the certificate that
+// expires at expiry was sent.
+func (s *Store) SetCertWarned(ctx context.Context, id int64, expiry time.Time) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE monitors SET cert_warned_at = ? WHERE id = ?`, expiry.Unix(), id)
 	if err != nil {
 		return err
 	}
