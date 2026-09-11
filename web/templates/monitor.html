@@ -82,7 +82,7 @@
       <div class="card-title">Uptime · 90 days</div>
       <span class="muted small">{{if .UptimePct}}{{.UptimePct}}% over 90 days{{else}}No data yet{{end}}</span>
     </div>
-    <div class="uptime uptime-90" aria-label="Uptime for the last 90 days">{{range .Uptime}}<span class="seg {{.Class}}" data-tip="{{.Tip}}"></span>{{end}}</div>
+    <div class="uptime uptime-90" role="img" aria-label="Uptime for the last 90 days: {{if .UptimePct}}{{.UptimePct}}%{{else}}no data yet{{end}}">{{range .Uptime}}<span class="seg {{.Class}}" data-tip="{{.Tip}}"></span>{{end}}</div>
     <div class="chart-axis"><span>90 d ago</span><span>today</span></div>
   </div>
 

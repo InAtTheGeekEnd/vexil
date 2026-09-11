@@ -23,7 +23,7 @@
         <span class="w-600">{{.Name}}</span>
         <span class="status-pct muted small">{{if .UptimePct}}{{.UptimePct}}% over 90 days{{else}}No data yet{{end}}</span>
       </span>
-      <span class="uptime uptime-90" aria-label="Uptime for the last 90 days">{{range .Uptime}}<span class="seg {{.Class}}" data-tip="{{.Tip}}"></span>{{end}}</span>
+      <span class="uptime uptime-90" role="img" aria-label="Uptime for the last 90 days: {{if .UptimePct}}{{.UptimePct}}%{{else}}no data yet{{end}}">{{range .Uptime}}<span class="seg {{.Class}}" data-tip="{{.Tip}}"></span>{{end}}</span>
     </li>
   {{end}}
   </ul>
