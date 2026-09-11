@@ -893,3 +893,37 @@ img.brand-logo { object-fit: contain; }
 .field input[type="color"]::-moz-color-swatch { border: 0; border-radius: 4px; }
 .badge { height: 20px; width: auto; display: block; }
 
+/* --- Public status page --- */
+
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  margin-bottom: 24px;
+}
+.banner h1 { margin: 0; }
+.banner .dot { width: 12px; height: 12px; }
+.banner-up { border-color: color-mix(in srgb, var(--up) 35%, transparent); background: color-mix(in srgb, var(--up) 8%, var(--surface)); }
+.banner-down { border-color: color-mix(in srgb, var(--down) 35%, transparent); background: color-mix(in srgb, var(--down) 8%, var(--surface)); }
+.status-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.status-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 20px;
+  border-top: 1px solid var(--border);
+}
+.status-row:first-child { border-top: 0; }
+.status-head { display: flex; align-items: center; gap: 10px; }
+.status-pct { margin-left: auto; white-space: nowrap; }

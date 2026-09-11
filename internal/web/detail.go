@@ -28,6 +28,7 @@ type monitorContent struct {
 	LastAt     int64  // unix seconds of the newest result, 0 when there is none
 	Kind       string // "check" or "push"
 	PushURL    string
+	BadgeURL   string // absolute badge URL for public monitors
 	Tiles      []statTile
 	Charts     []chartRange // empty for push monitors
 	Uptime     []uptimeDay  // 90 days
@@ -111,6 +112,9 @@ func (s *Server) handleMonitor(w http.ResponseWriter, r *http.Request) {
 	c.LastHead, c.LastAt = lastParts(m, st)
 	c.LastLine = lastLine(m, st, now)
 	c.Uptime, c.UptimePct = uptimeBar(days)
+	if m.Public {
+		c.BadgeURL = s.absoluteURL(r, fmt.Sprintf("/badge/%d.svg", m.ID))
+	}
 	if m.Type == store.TypePush {
 		c.PushURL = s.pushURL(r, m.PushToken)
 	} else {

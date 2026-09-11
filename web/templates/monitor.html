@@ -42,6 +42,18 @@
   </div>
   {{end}}
 
+  {{if .M.Public}}
+  <div class="card">
+    <div class="card-title">Public badge</div>
+    <p class="muted">This monitor is on the <a href="/status">status page</a>. Put its badge in a README or on a web page.</p>
+    <div class="copy-row mt-6">
+      <img class="badge" src="/badge/{{.M.ID}}.svg" alt="Status badge for {{.M.Name}}" height="20">
+      <code class="push-url">{{.BadgeURL}}</code>
+      <button type="button" class="btn btn-secondary btn-sm" data-copy="{{.BadgeURL}}">Copy</button>
+    </div>
+  </div>
+  {{end}}
+
   {{if .Charts}}
   <div class="card" id="response">
     <div class="card-head">

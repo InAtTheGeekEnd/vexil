@@ -245,6 +245,12 @@ func plural(n int, word string) string {
 // --- Detail helpers ---
 
 func (s *Server) pushURL(r *http.Request, token string) string {
+	return s.absoluteURL(r, "/push/"+token)
+}
+
+// absoluteURL prefixes a path with the base URL, or with the scheme and
+// host of the request when no base URL is set.
+func (s *Server) absoluteURL(r *http.Request, path string) string {
 	base := s.baseURL
 	if base == "" {
 		scheme := "http"
@@ -253,7 +259,7 @@ func (s *Server) pushURL(r *http.Request, token string) string {
 		}
 		base = scheme + "://" + r.Host
 	}
-	return base + "/push/" + token
+	return base + path
 }
 
 // loadMonitor reads the {id} path value. It renders 404 and returns false

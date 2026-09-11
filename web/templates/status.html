@@ -1,0 +1,56 @@
+{{define "title"}}Status · {{.Brand.Name}}{{end}}
+{{define "head"}}<meta http-equiv="refresh" content="60">{{end}}
+{{define "body"}}
+<header class="topbar">
+  <div class="container topbar-inner">
+    <span class="brand">{{template "logo" .}}<span>{{.Brand.Name}}</span></span>
+    <span class="muted small">Refreshes every minute</span>
+  </div>
+</header>
+<main class="container page page-narrow">
+{{with .Content}}
+  <section class="banner banner-{{.State}}">
+    <span class="dot dot-{{.State}}" aria-hidden="true"></span>
+    <h1 class="t-20">{{.Headline}}</h1>
+  </section>
+
+  {{if .Rows}}
+  <ul class="status-list">
+  {{range .Rows}}
+    <li class="status-row">
+      <span class="status-head">
+        <span class="dot dot-{{.State}}"><span class="sr-only">{{.StateLabel}}</span></span>
+        <span class="w-600">{{.Name}}</span>
+        <span class="status-pct muted small">{{if .UptimePct}}{{.UptimePct}}% over 90 days{{else}}No data yet{{end}}</span>
+      </span>
+      <span class="uptime uptime-90" aria-label="Uptime for the last 90 days">{{range .Uptime}}<span class="seg {{.Class}}" data-tip="{{.Tip}}"></span>{{end}}</span>
+    </li>
+  {{end}}
+  </ul>
+  {{else}}
+  <section class="empty">
+    <p class="lead">No monitors are on this page yet.</p>
+  </section>
+  {{end}}
+
+  <div class="card mt-24">
+    <div class="card-title">Incidents · last 14 days</div>
+    {{if .Incidents}}
+    <div class="table-wrap">
+    <table class="table incidents">
+      <thead><tr><th>Monitor</th><th>Start</th><th>Duration</th><th>Reason</th></tr></thead>
+      <tbody>
+      {{range .Incidents}}
+        <tr{{if .Open}} class="incident-open"{{end}}><td class="nowrap">{{.Monitor}}</td><td class="nowrap">{{.Start}}</td><td class="nowrap">{{.Duration}}</td><td>{{.Reason}}</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+    </div>
+    {{else}}
+    <p class="muted">No incidents in the last 14 days.</p>
+    {{end}}
+  </div>
+{{end}}
+</main>
+{{template "footer" .}}
+{{end}}
