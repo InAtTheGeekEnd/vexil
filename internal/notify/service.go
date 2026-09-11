@@ -1,0 +1,178 @@
+package notify
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"sync"
+	"time"
+
+	"github.com/InAtTheGeekEnd/vexil/internal/engine"
+	"github.com/InAtTheGeekEnd/vexil/internal/store"
+)
+
+// retryDelays are the waits between attempts (SPEC.md section 7.4).
+var retryDelays = []time.Duration{5 * time.Second, 30 * time.Second, 2 * time.Minute}
+
+// sendTimeout limits one delivery attempt.
+const sendTimeout = 15 * time.Second
+
+// Options configures a Service.
+type Options struct {
+	Log     *slog.Logger // nil means slog.Default()
+	Brand   string       // product name for email
+	BaseURL string       // public URL for links, "" means no links
+	Client  *http.Client // nil means a client with a timeout
+}
+
+// Service turns engine alerts into messages and delivers them to every
+// enabled channel. It implements engine.Notifier.
+type Service struct {
+	store   *store.Store
+	log     *slog.Logger
+	client  *http.Client
+	brand   string
+	baseURL string
+	sleep   func(context.Context, time.Duration) bool
+	wg      sync.WaitGroup
+}
+
+// NewService builds a Service.
+func NewService(st *store.Store, opts Options) *Service {
+	s := &Service{store: st, log: opts.Log, client: opts.Client, brand: opts.Brand, baseURL: opts.BaseURL, sleep: sleep}
+	if s.log == nil {
+		s.log = slog.Default()
+	}
+	if s.client == nil {
+		s.client = &http.Client{Timeout: sendTimeout}
+	}
+	return s
+}
+
+func sleep(ctx context.Context, d time.Duration) bool {
+	select {
+	case <-time.After(d):
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// Notify builds the message for an alert and delivers it to every enabled
+// channel, each in its own goroutine.
+func (s *Service) Notify(ctx context.Context, ev engine.Event) {
+	if ev.Alert == engine.AlertNone {
+		return
+	}
+	m, err := s.message(ctx, ev)
+	if err != nil {
+		s.log.Error("build alert", "monitor", ev.MonitorID, "err", err)
+		return
+	}
+	channels, err := s.store.EnabledChannels(ctx)
+	if err != nil {
+		s.log.Error("load channels", "err", err)
+		return
+	}
+	for _, c := range channels {
+		s.wg.Add(1)
+		go func(c store.Channel) {
+			defer s.wg.Done()
+			s.deliver(context.Background(), c, m)
+		}(c)
+	}
+}
+
+// Wait blocks until every delivery in progress has ended. Tests use it.
+func (s *Service) Wait() { s.wg.Wait() }
+
+// message fills a Message from an event.
+func (s *Service) message(ctx context.Context, ev engine.Event) (Message, error) {
+	mon, err := s.store.Monitor(ctx, ev.MonitorID)
+	if err != nil {
+		return Message{}, err
+	}
+	m := Message{Monitor: mon, At: ev.At, Brand: s.brand}
+	if s.baseURL != "" {
+		m.URL = fmt.Sprintf("%s/monitors/%d", s.baseURL, mon.ID)
+	}
+	switch ev.Alert {
+	case engine.AlertDown:
+		m.Kind, m.Reason = KindDown, ev.Result.Error
+	case engine.AlertUp:
+		m.Kind = KindUp
+		incidents, err := s.store.Incidents(ctx, mon.ID, 1)
+		if err != nil {
+			return Message{}, err
+		}
+		if len(incidents) == 1 && !incidents[0].Open() {
+			m.DownFor = incidents[0].EndedAt.Sub(incidents[0].StartedAt)
+		}
+	case engine.AlertCert:
+		m.Kind, m.CertExpiry = KindCert, ev.Result.CertExpiry
+	default:
+		return Message{}, fmt.Errorf("unknown alert %d", ev.Alert)
+	}
+	return m, nil
+}
+
+// deliver sends m to one channel with retries. The last failure is logged
+// and stored on the channel; a success clears it.
+func (s *Service) deliver(ctx context.Context, c store.Channel, m Message) {
+	sender, err := New(c, s.client)
+	if err != nil {
+		s.fail(ctx, c, err.Error())
+		return
+	}
+	var last string
+	for attempt := 0; ; attempt++ {
+		actx, cancel := context.WithTimeout(ctx, sendTimeout)
+		err := sender.Send(actx, m)
+		cancel()
+		if err == nil {
+			if c.LastError != "" || attempt > 0 {
+				if err := s.store.SetChannelError(ctx, c.ID, "", time.Time{}); err != nil {
+					s.log.Error("clear channel error", "channel", c.ID, "err", err)
+				}
+			}
+			return
+		}
+		last = Redact(err.Error(), Secrets(c))
+		if attempt >= len(retryDelays) {
+			break
+		}
+		s.log.Warn("alert delivery failed, will retry", "channel", c.ID, "name", c.Name, "attempt", attempt+1, "err", last)
+		if !s.sleep(ctx, retryDelays[attempt]) {
+			return
+		}
+	}
+	s.fail(ctx, c, last)
+}
+
+func (s *Service) fail(ctx context.Context, c store.Channel, msg string) {
+	s.log.Error("alert delivery failed", "channel", c.ID, "name", c.Name, "type", c.Type, "err", msg)
+	if err := s.store.SetChannelError(ctx, c.ID, msg, time.Now()); err != nil {
+		s.log.Error("record channel error", "channel", c.ID, "err", err)
+	}
+}
+
+// Test sends one test message to a channel at once, without retries. The
+// error it returns is safe to show: secrets are redacted.
+func (s *Service) Test(ctx context.Context, c store.Channel) error {
+	sender, err := New(c, s.client)
+	if err != nil {
+		return err
+	}
+	m := Message{Kind: KindTest, Monitor: store.Monitor{Name: s.brand}, At: time.Now(), Brand: s.brand}
+	if s.baseURL != "" {
+		m.URL = s.baseURL + "/notifications"
+	}
+	ctx, cancel := context.WithTimeout(ctx, sendTimeout)
+	defer cancel()
+	if err := sender.Send(ctx, m); err != nil {
+		return errors.New(Redact(err.Error(), Secrets(c)))
+	}
+	return nil
+}
