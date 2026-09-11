@@ -10,6 +10,8 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -369,22 +371,81 @@ func TestBrandNameComesFromSetting(t *testing.T) {
 	}
 }
 
-// TestTemplatesHaveNoLiteralProductName enforces SPEC.md section 12.
-func TestTemplatesHaveNoLiteralProductName(t *testing.T) {
+// TestNoLiteralProductName enforces SPEC.md section 12: the product name
+// comes from the brand setting. It scans the templates, the static JS and
+// CSS, and every Go file outside internal/brand. Comments, the module
+// path, the VEXIL_ environment names and the database file name are the
+// only allowed places for the literal.
+func TestNoLiteralProductName(t *testing.T) {
 	needle := strings.ToLower(brand.Default.Name)
-	err := fs.WalkDir(assets.Templates, "templates", func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		b, err := fs.ReadFile(assets.Templates, path)
-		if err != nil {
-			return err
-		}
+	allowed := []string{"github.com/", needle + "_", needle + ".db"}
+	check := func(path string, b []byte) {
 		for i, line := range strings.Split(string(b), "\n") {
-			if strings.Contains(strings.ToLower(line), needle) {
+			if idx := strings.Index(line, "//"); idx >= 0 {
+				line = line[:idx]
+			}
+			l := strings.ToLower(line)
+			if !strings.Contains(l, needle) {
+				continue
+			}
+			ok := false
+			for _, a := range allowed {
+				if strings.Contains(l, a) {
+					ok = true
+				}
+			}
+			if !ok {
 				t.Errorf("%s:%d contains the literal product name", path, i+1)
 			}
 		}
+	}
+	for _, root := range []string{"templates", "static"} {
+		fsys := fs.FS(assets.Templates)
+		if root == "static" {
+			fsys = assets.Static
+		}
+		err := fs.WalkDir(fsys, root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
+			}
+			ext := filepath.Ext(path)
+			if root == "static" && ext != ".js" && ext != ".css" {
+				return nil
+			}
+			b, err := fs.ReadFile(fsys, path)
+			if err != nil {
+				return err
+			}
+			check(path, b)
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	repo := filepath.Join("..", "..")
+	err := filepath.WalkDir(repo, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(repo, path)
+		if d.IsDir() {
+			if rel == "." {
+				return nil
+			}
+			if rel == filepath.Join("internal", "brand") || strings.HasPrefix(d.Name(), ".") || d.Name() == "data" {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(path) != ".go" {
+			return nil
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		check(rel, b)
 		return nil
 	})
 	if err != nil {
