@@ -2,7 +2,7 @@
 {{define "bodyclass"}}auth{{end}}
 {{define "body"}}
 <main class="auth-card">
-  <h1 class="auth-brand">{{.Brand.Name}}</h1>
+  <h1 class="auth-brand">{{template "logo" .}}<span>{{.Brand.Name}}</span></h1>
   <p class="lead">Welcome. Choose a password for the admin account.</p>
   {{if .Error}}<p class="alert alert-error" role="alert">{{.Error}}</p>{{end}}
   <form method="post" action="/setup" class="stack">
