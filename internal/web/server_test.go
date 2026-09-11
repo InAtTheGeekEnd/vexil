@@ -592,3 +592,52 @@ func TestStaticVersioning(t *testing.T) {
 		}
 	}
 }
+
+// TestSecureCookieBehindProxy checks that X-Forwarded-Proto counts only
+// when the request comes from a loopback or private address.
+func TestSecureCookieBehindProxy(t *testing.T) {
+	s, st := newTestServer(t, Options{})
+	setPassword(t, st)
+	tests := []struct {
+		name       string
+		remoteAddr string
+		proto      string
+		wantSecure bool
+	}{
+		{"loopback proxy says https", "127.0.0.1:4321", "https", true},
+		{"ipv6 loopback proxy says https", "[::1]:4321", "https", true},
+		{"private proxy says https", "10.0.0.2:4321", "https", true},
+		{"docker network proxy says https", "172.18.0.1:4321", "https", true},
+		{"loopback proxy says http", "127.0.0.1:4321", "http", false},
+		{"public client claims https", "203.0.113.7:4321", "https", false},
+		{"no header", "127.0.0.1:4321", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			form := url.Values{"password": {testPassword}}
+			req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.RemoteAddr = tt.remoteAddr
+			if tt.proto != "" {
+				req.Header.Set("X-Forwarded-Proto", tt.proto)
+			}
+			rec := httptest.NewRecorder()
+			s.ServeHTTP(rec, req)
+			if rec.Code != http.StatusSeeOther {
+				t.Fatalf("login = %d, want 303", rec.Code)
+			}
+			var cookie *http.Cookie
+			for _, ck := range rec.Result().Cookies() {
+				if ck.Name == sessionCookie {
+					cookie = ck
+				}
+			}
+			if cookie == nil {
+				t.Fatal("no session cookie set")
+			}
+			if cookie.Secure != tt.wantSecure {
+				t.Fatalf("Secure = %v, want %v", cookie.Secure, tt.wantSecure)
+			}
+		})
+	}
+}

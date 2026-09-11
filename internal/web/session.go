@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 )
@@ -80,9 +82,28 @@ func (s *Server) loggedIn(r *http.Request) (bool, error) {
 	return s.store.SessionValid(r.Context(), hashToken(c.Value), time.Now())
 }
 
+// isHTTPS reports whether the client reached the server over HTTPS. The
+// X-Forwarded-Proto header counts only when the request comes from a
+// reverse proxy on a loopback or private address, so a client on the
+// internet cannot claim HTTPS.
 func isHTTPS(r *http.Request) bool {
 	if r.TLS != nil {
 		return true
 	}
-	return strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	return trustedProxy(r.RemoteAddr) && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+}
+
+// trustedProxy reports whether a remote address is a loopback or private
+// IP address.
+func trustedProxy(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	ip = ip.Unmap()
+	return ip.IsLoopback() || ip.IsPrivate()
 }
