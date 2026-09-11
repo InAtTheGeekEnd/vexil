@@ -375,3 +375,58 @@ func TestStaticAssets(t *testing.T) {
 		t.Fatalf("css: %d %q", rec.Code, rec.Header().Get("Content-Type"))
 	}
 }
+
+func TestStyleguide(t *testing.T) {
+	s, st := newTestServer(t, Options{})
+	setPassword(t, st)
+	ts := httptest.NewServer(s)
+	defer ts.Close()
+	c := client(t)
+
+	if res := get(t, c, ts.URL+"/styleguide"); res.StatusCode != http.StatusFound {
+		t.Fatalf("anonymous /styleguide = %d, want 302", res.StatusCode)
+	}
+	postForm(t, c, ts.URL+"/login", url.Values{"password": {testPassword}})
+	res := get(t, c, ts.URL+"/styleguide")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("/styleguide = %d", res.StatusCode)
+	}
+	b := body(t, res)
+	for _, want := range []string{
+		`data-theme="light"`, `data-theme="dark"`, `class="theme-toggle"`,
+		`dot-up`, `dot-down`, `dot-paused`, `dot-pending`,
+		`class="uptime"`, `<svg class="chart"`, `<svg class="sparkline"`,
+		`class="card stat"`, `class="empty"`, `btn-primary`, `class="field"`,
+	} {
+		if !strings.Contains(b, want) {
+			t.Errorf("styleguide lacks %q", want)
+		}
+	}
+	// The CSP allows no inline styles or handlers.
+	if strings.Contains(b, " style=") || strings.Contains(b, " on") && strings.Contains(b, `="return`) {
+		t.Error("styleguide uses inline style or handler attributes")
+	}
+}
+
+func TestStaticFontAndLogo(t *testing.T) {
+	s, _ := newTestServer(t, Options{})
+	tests := []struct {
+		path  string
+		ctype string
+	}{
+		{"/static/fonts/InterVariable.woff2", "font/woff2"},
+		{"/static/fonts/OFL.txt", "text/plain"},
+		{"/static/img/logo.svg", "image/svg+xml"},
+		{"/static/js/theme.js", "javascript"},
+		{"/static/js/chart.js", "javascript"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tt.path, nil))
+			if rec.Code != http.StatusOK || !strings.Contains(rec.Header().Get("Content-Type"), tt.ctype) {
+				t.Fatalf("%s: %d %q", tt.path, rec.Code, rec.Header().Get("Content-Type"))
+			}
+		})
+	}
+}

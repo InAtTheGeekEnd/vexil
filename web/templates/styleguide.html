@@ -1,0 +1,231 @@
+{{define "title"}}Style guide · {{.Brand.Name}}{{end}}
+{{define "body"}}
+{{template "header" .}}
+<main class="container page">
+  <div class="page-head">
+    <div>
+      <h1 class="t-28">Style guide</h1>
+      <p class="muted">Every component in the light and dark themes. Use the toggle in the footer to switch the whole page.</p>
+    </div>
+  </div>
+
+  <section class="sg-section">
+    <h2>Colors</h2>
+    <p class="muted">Status colors are the only loud things on the screen.</p>
+    <div class="sg-themes">
+      <div class="sg-panel" data-theme="light"><div class="sg-label">Light</div>{{template "sg-colors" .}}</div>
+      <div class="sg-panel" data-theme="dark"><div class="sg-label">Dark</div>{{template "sg-colors" .}}</div>
+    </div>
+  </section>
+
+  <section class="sg-section">
+    <h2>Typography</h2>
+    <p class="muted">Inter. Scale 12, 14, 16, 20, 28, 40. Weights 400 and 600. Numbers use tabular figures.</p>
+    <div class="sg-themes">
+      <div class="sg-panel" data-theme="light"><div class="sg-label">Light</div>{{template "sg-type" .}}</div>
+      <div class="sg-panel" data-theme="dark"><div class="sg-label">Dark</div>{{template "sg-type" .}}</div>
+    </div>
+  </section>
+
+  <section class="sg-section">
+    <h2>Buttons</h2>
+    <p class="muted">36 px high, 8 px radius. Primary is the accent fill. Secondary is border only.</p>
+    <div class="sg-themes">
+      <div class="sg-panel" data-theme="light"><div class="sg-label">Light</div>{{template "sg-buttons" .}}</div>
+      <div class="sg-panel" data-theme="dark"><div class="sg-label">Dark</div>{{template "sg-buttons" .}}</div>
+    </div>
+  </section>
+
+  <section class="sg-section">
+    <h2>Inputs</h2>
+    <p class="muted">40 px high with a clear accent focus ring. Click into a field to see it.</p>
+    <div class="sg-themes">
+      <div class="sg-panel" data-theme="light"><div class="sg-label">Light</div>{{template "sg-inputs" .}}</div>
+      <div class="sg-panel" data-theme="dark"><div class="sg-label">Dark</div>{{template "sg-inputs" .}}</div>
+    </div>
+  </section>
+
+  <section class="sg-section">
+    <h2>Status dots</h2>
+    <p class="muted">8 px. UP pulses slowly, DOWN pulses fast, PAUSED is a ring, PENDING blinks. Each dot has a text label for screen readers.</p>
+    <div class="sg-themes">
+      <div class="sg-panel" data-theme="light"><div class="sg-label">Light</div>{{template "sg-dots" .}}</div>
+      <div class="sg-panel" data-theme="dark"><div class="sg-label">Dark</div>{{template "sg-dots" .}}</div>
+    </div>
+  </section>
+
+  <section class="sg-section">
+    <h2>Uptime bar</h2>
+    <p class="muted">30 days, 28 px high, 2 px gaps. Hover a segment for the date, uptime and incidents. On a phone it shrinks to 14 days.</p>
+    <div class="sg-themes">
+      <div class="sg-panel" data-theme="light"><div class="sg-label">Light</div>{{template "sg-uptime" .}}</div>
+      <div class="sg-panel" data-theme="dark"><div class="sg-label">Dark</div>{{template "sg-uptime" .}}</div>
+    </div>
+  </section>
+
+  <section class="sg-section">
+    <h2>Response chart</h2>
+    <p class="muted">Server-rendered SVG. A smooth accent line over a soft fill, one faint baseline. Hover for the value.</p>
+    <div class="sg-themes">
+      <div class="sg-panel" data-theme="light"><div class="sg-label">Light</div>{{template "sg-chart" .}}</div>
+      <div class="sg-panel" data-theme="dark"><div class="sg-label">Dark</div>{{template "sg-chart" .}}</div>
+    </div>
+  </section>
+
+  <section class="sg-section">
+    <h2>Sparkline</h2>
+    <p class="muted">80 x 24 px. Same style as the chart, no axes. Shown here in a dashboard row.</p>
+    <div class="sg-themes">
+      <div class="sg-panel" data-theme="light"><div class="sg-label">Light</div>{{template "sg-rows" .}}</div>
+      <div class="sg-panel" data-theme="dark"><div class="sg-label">Dark</div>{{template "sg-rows" .}}</div>
+    </div>
+  </section>
+
+  <section class="sg-section">
+    <h2>Cards and stat tiles</h2>
+    <p class="muted">Surface background, 1 px border, 12 px radius. No heavy shadows.</p>
+    <div class="sg-themes">
+      <div class="sg-panel" data-theme="light"><div class="sg-label">Light</div>{{template "sg-cards" .}}</div>
+      <div class="sg-panel" data-theme="dark"><div class="sg-label">Dark</div>{{template "sg-cards" .}}</div>
+    </div>
+  </section>
+
+  <section class="sg-section">
+    <h2>Empty state and messages</h2>
+    <p class="muted">One short sentence and one button. Errors say what happened and what to do next.</p>
+    <div class="sg-themes">
+      <div class="sg-panel" data-theme="light"><div class="sg-label">Light</div>{{template "sg-empty" .}}</div>
+      <div class="sg-panel" data-theme="dark"><div class="sg-label">Dark</div>{{template "sg-empty" .}}</div>
+    </div>
+  </section>
+</main>
+{{template "footer" .}}
+{{end}}
+
+{{define "sg-colors"}}<div class="sg-swatches">
+  <div class="sg-swatch"><div class="chip chip-bg"></div><div class="name">--bg</div></div>
+  <div class="sg-swatch"><div class="chip chip-surface"></div><div class="name">--surface</div></div>
+  <div class="sg-swatch"><div class="chip chip-border"></div><div class="name">--border</div></div>
+  <div class="sg-swatch"><div class="chip chip-text"></div><div class="name">--text</div></div>
+  <div class="sg-swatch"><div class="chip chip-muted"></div><div class="name">--muted</div></div>
+  <div class="sg-swatch"><div class="chip chip-accent"></div><div class="name">--accent</div></div>
+  <div class="sg-swatch"><div class="chip chip-up"></div><div class="name">--up</div></div>
+  <div class="sg-swatch"><div class="chip chip-warn"></div><div class="name">--warn</div></div>
+  <div class="sg-swatch"><div class="chip chip-down"></div><div class="name">--down</div></div>
+  <div class="sg-swatch"><div class="chip chip-paused"></div><div class="name">--paused</div></div>
+</div>{{end}}
+
+{{define "sg-type"}}<div class="sg-type">
+  <div><span class="muted">40 / 600</span><span class="t-40 w-600">99.98%</span></div>
+  <div><span class="muted">28 / 600</span><span class="t-28 w-600">Monitor detail</span></div>
+  <div><span class="muted">20 / 600</span><span class="t-20 w-600">Section title</span></div>
+  <div><span class="muted">16 / 400</span><span class="t-16">Lead text explains one thing in one sentence.</span></div>
+  <div><span class="muted">14 / 400</span><span class="t-14">Body text. The check timed out after 10 seconds.</span></div>
+  <div><span class="muted">12 / 400</span><span class="t-12 muted">Muted caption · 182 ms · 2 minutes ago</span></div>
+  <div><span class="muted">mono</span><code>HTTP 503</code></div>
+</div>{{end}}
+
+{{define "sg-buttons"}}<div class="stack">
+  <div class="row">
+    <button type="button" class="btn btn-primary">Add monitor</button>
+    <button type="button" class="btn btn-secondary">Cancel</button>
+    <button type="button" class="btn btn-danger">Delete</button>
+    <button type="button" class="btn btn-ghost">Log out</button>
+  </div>
+  <div class="row">
+    <button type="button" class="btn btn-primary btn-sm">Save</button>
+    <button type="button" class="btn btn-secondary btn-sm">Pause</button>
+    <button type="button" class="btn btn-primary" disabled>Saving…</button>
+  </div>
+</div>{{end}}
+
+{{define "sg-inputs"}}<div class="stack">
+  <label class="field">
+    <span>Name</span>
+    <input type="text" value="Marketing site" autocomplete="off">
+  </label>
+  <label class="field">
+    <span>URL</span>
+    <input type="url" placeholder="https://example.com" autocomplete="off">
+    <span class="hint">Include the scheme.</span>
+  </label>
+  <label class="field invalid">
+    <span>Keyword</span>
+    <input type="text" value="" autocomplete="off">
+    <span class="error">Enter a keyword or clear the field.</span>
+  </label>
+  <label class="field">
+    <span>Type</span>
+    <select><option>HTTP</option><option>TCP</option><option>Ping</option><option>DNS</option><option>Push</option></select>
+  </label>
+  <label class="check"><input type="checkbox" checked> Show on the public status page</label>
+</div>{{end}}
+
+{{define "sg-dots"}}<div class="sg-dots">
+  <span class="status status-up"><span class="dot dot-up"></span>Up<span class="sr-only"> status</span></span>
+  <span class="status status-down"><span class="dot dot-down"></span>Down<span class="sr-only"> status</span></span>
+  <span class="status status-paused"><span class="dot dot-paused"></span>Paused<span class="sr-only"> status</span></span>
+  <span class="status status-pending"><span class="dot dot-pending"></span>Pending<span class="sr-only"> status</span></span>
+</div>{{end}}
+
+{{define "sg-uptime"}}<div class="stack">
+  <div>
+    <div class="uptime">{{range .Content.Uptime}}<span class="seg {{.Class}}" data-tip="{{.Tip}}"></span>{{end}}</div>
+    <p class="muted small mt-6">All up. The first days have no data.</p>
+  </div>
+  <div>
+    <div class="uptime">{{range .Content.UptimeBad}}<span class="seg {{.Class}}" data-tip="{{.Tip}}"></span>{{end}}</div>
+    <p class="muted small mt-6">One partial outage and one bad day.</p>
+  </div>
+</div>{{end}}
+
+{{define "sg-chart"}}<div class="stack">
+  <div class="card">
+    <div class="card-title">Response time · 24 h</div>
+    <div class="chart-wrap">{{.Content.Chart}}</div>
+    <div class="chart-axis"><span>24 h ago</span><span>now</span></div>
+  </div>
+  <div class="card">
+    <div class="card-title">Flat series</div>
+    <div class="chart-wrap">{{.Content.ChartFlat}}</div>
+    <div class="chart-axis"><span>24 h ago</span><span>now</span></div>
+  </div>
+</div>{{end}}
+
+{{define "sg-rows"}}<div class="card stack">
+  <div class="sg-monitor-row">
+    <span class="dot dot-up"><span class="sr-only">Up</span></span>
+    <div><div class="w-600">Marketing site</div><div class="muted small">HTTP · every 60 s</div></div>
+    {{.Content.Spark}}
+    <span class="muted">124 ms</span>
+  </div>
+  <div class="sg-monitor-row">
+    <span class="dot dot-down"><span class="sr-only">Down</span></span>
+    <div><div class="w-600">API</div><div class="muted small">HTTP · connection refused</div></div>
+    {{.Content.SparkSpiky}}
+    <span class="status-down w-600">Down</span>
+  </div>
+  <div class="sg-monitor-row">
+    <span class="dot dot-paused"><span class="sr-only">Paused</span></span>
+    <div><div class="w-600">Staging</div><div class="muted small">TCP · paused</div></div>
+    <span></span>
+    <span class="muted">paused</span>
+  </div>
+</div>{{end}}
+
+{{define "sg-cards"}}<div class="grid">
+  <div class="card stat"><span class="label">Uptime · 30 d</span><span class="value">99.98<small>%</small></span></div>
+  <div class="card stat"><span class="label">Avg response</span><span class="value">182<small>ms</small></span></div>
+  <div class="card stat"><span class="label">Incidents</span><span class="value">2</span></div>
+  <div class="card stat"><span class="label">Certificate</span><span class="value">61<small>days</small></span></div>
+</div>{{end}}
+
+{{define "sg-empty"}}<div class="stack">
+  <section class="empty">
+    <p class="lead">No monitors yet.</p>
+    <a class="btn btn-primary" href="#">Add your first monitor</a>
+  </section>
+  <p class="alert alert-error" role="alert">Wrong password. Try again.</p>
+  <p class="alert alert-ok" role="status">Monitor saved.</p>
+  <p class="alert">The test message was sent. Check the channel.</p>
+</div>{{end}}

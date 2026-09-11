@@ -17,6 +17,8 @@ type pageData struct {
 	Error   string
 	Title   string
 	Message string
+	// Content carries page-specific data.
+	Content any
 }
 
 // parseTemplates parses each page together with the layout.
