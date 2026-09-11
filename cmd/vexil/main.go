@@ -2,6 +2,7 @@
 //
 //	vexil                 start the server
 //	vexil reset-password  set a new admin password and log out all sessions
+//	vexil healthcheck     ask /readyz and exit with 0 or 1, for Docker
 package main
 
 import (
@@ -9,7 +10,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -38,6 +41,8 @@ func main() {
 		err = serve(cfg, log)
 	case "reset-password":
 		err = resetPassword(cfg)
+	case "healthcheck":
+		err = healthcheck(cfg)
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -59,7 +64,7 @@ func arg(i int) string {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "Usage:\n  %[1]s                 start the server\n  %[1]s reset-password  set a new admin password\n\nEnvironment:\n  VEXIL_ADDR      listen address (default :8080)\n  VEXIL_DATA      data folder (default ./data)\n  VEXIL_BASE_URL  public URL used in notification links\n", brand.Default.Name)
+	fmt.Fprintf(os.Stderr, "Usage:\n  %[1]s                 start the server\n  %[1]s reset-password  set a new admin password\n  %[1]s healthcheck     exit 0 when /readyz answers ok\n\nEnvironment:\n  VEXIL_ADDR      listen address (default :8080)\n  VEXIL_DATA      data folder (default ./data)\n  VEXIL_BASE_URL  public URL used in notification links\n", brand.Default.Name)
 }
 
 func serve(cfg config.Config, log *slog.Logger) error {
@@ -144,6 +149,30 @@ func resetPassword(cfg config.Config) error {
 		return err
 	}
 	fmt.Println("Password updated. All sessions were logged out.")
+	return nil
+}
+
+// healthcheck asks the running server for /readyz. Docker calls it, as the
+// distroless image has no curl.
+func healthcheck(cfg config.Config) error {
+	host, port, err := net.SplitHostPort(cfg.Addr)
+	if err != nil {
+		return fmt.Errorf("bad listen address %q: %w", cfg.Addr, err)
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	res, err := client.Get("http://" + net.JoinHostPort(host, port) + "/readyz")
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
+	if res.StatusCode != http.StatusOK {
+		return fmt.Errorf("not ready: %s", strings.TrimSpace(string(body)))
+	}
+	fmt.Println(strings.TrimSpace(string(body)))
 	return nil
 }
 
