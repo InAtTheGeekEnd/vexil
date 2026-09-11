@@ -30,7 +30,7 @@ type Brand struct {
 // Default is the built-in brand.
 var Default = Brand{
 	Name:      "vexil",
-	Accent:    "#6366F1",
+	Accent:    "#4F46E5",
 	PoweredBy: true,
 }
 
@@ -97,7 +97,7 @@ func isSVG(data []byte) bool {
 }
 
 // ErrAccent describes an invalid accent color.
-var ErrAccent = errors.New("enter a color as a hex code, for example #6366F1")
+var ErrAccent = errors.New("enter a color as a hex code, for example #4F46E5")
 
 // ParseAccent accepts "#RRGGBB", "RRGGBB", "#RGB" or "RGB" and returns the
 // color as "#RRGGBB" in upper case.

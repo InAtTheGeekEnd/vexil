@@ -453,7 +453,7 @@ References for tone (not for copying): Linear, Vercel dashboard, Stripe status, 
 | `--border` | `#E8EAED` | `#1F242C` |
 | `--text` | `#0F1115` | `#E6E8EB` |
 | `--muted` | `#6B7280` | `#8A93A0` |
-| `--accent` | `#6366F1` (brand, changeable) | same |
+| `--accent` | `#4F46E5` (brand, changeable) | same |
 | `--up` | `#16A34A` | `#22C55E` |
 | `--warn` | `#D97706` | `#F59E0B` |
 | `--down` | `#DC2626` | `#EF4444` |
@@ -519,7 +519,7 @@ Settings page, section **Brand**:
 | Product name | vexil |
 | Logo (SVG or PNG, max 512 KB) | vexil logo |
 | Favicon | Generated from the logo |
-| Accent color | `#6366F1` |
+| Accent color | `#4F46E5` |
 | Show "Powered by vexil" footer | On |
 
 - The product name appears in the page titles, the header, emails and notification footers.

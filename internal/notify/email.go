@@ -130,7 +130,7 @@ var emailTemplate = template.Must(template.New("email").Parse(`<!doctype html>
 <tr><td style="padding:24px">
 <p style="margin:0 0 12px;font-size:20px;font-weight:600">{{.Title}}</p>
 {{range .Lines}}<p style="margin:0 0 6px;font-size:14px;color:#6B7280">{{.}}</p>{{end}}
-{{if .URL}}<p style="margin:16px 0 0"><a href="{{.URL}}" style="display:inline-block;padding:8px 14px;background:#6366F1;color:#FFFFFF;text-decoration:none;border-radius:8px;font-size:14px;font-weight:600">Open {{.Monitor.Name}}</a></p>{{end}}
+{{if .URL}}<p style="margin:16px 0 0"><a href="{{.URL}}" style="display:inline-block;padding:8px 14px;background:#4F46E5;color:#FFFFFF;text-decoration:none;border-radius:8px;font-size:14px;font-weight:600">Open {{.Monitor.Name}}</a></p>{{end}}
 </td></tr>
 <tr><td style="padding:12px 24px;border-top:1px solid #E8EAED;font-size:12px;color:#6B7280">Sent by {{.Brand}}</td></tr>
 </table>

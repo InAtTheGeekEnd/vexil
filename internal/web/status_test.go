@@ -12,7 +12,7 @@ import (
 )
 
 func TestStatusPage(t *testing.T) {
-	s, st := newTestServer(t, Options{Brand: brand.Brand{Name: "Acme Watch", Accent: "#6366F1", PoweredBy: true}})
+	s, st := newTestServer(t, Options{Brand: brand.Brand{Name: "Acme Watch", Accent: "#4F46E5", PoweredBy: true}})
 	setPassword(t, st)
 	ctx := context.Background()
 

@@ -61,7 +61,7 @@ func TestSettingsBrand(t *testing.T) {
 		t.Fatalf("GET /settings = %d", res.StatusCode)
 	}
 	b := body(t, res)
-	if !strings.Contains(b, `value="`+brand.Default.Name+`"`) || !strings.Contains(b, `value="#6366F1"`) {
+	if !strings.Contains(b, `value="`+brand.Default.Name+`"`) || !strings.Contains(b, `value="#4F46E5"`) {
 		t.Fatal("settings page does not show the defaults")
 	}
 
@@ -116,11 +116,11 @@ func TestSettingsValidation(t *testing.T) {
 		logo   []byte
 		want   string
 	}{
-		{"empty name", map[string]string{"name": "  ", "accent": "#6366F1"}, nil, "Enter a product name."},
-		{"long name", map[string]string{"name": strings.Repeat("a", 41), "accent": "#6366F1"}, nil, "Use at most 40 characters."},
+		{"empty name", map[string]string{"name": "  ", "accent": "#4F46E5"}, nil, "Enter a product name."},
+		{"long name", map[string]string{"name": strings.Repeat("a", 41), "accent": "#4F46E5"}, nil, "Use at most 40 characters."},
 		{"bad accent", map[string]string{"name": "Acme", "accent": "purple"}, nil, "Enter a color as a hex code"},
-		{"html logo", map[string]string{"name": "Acme", "accent": "#6366F1"}, []byte("<html><script>alert(1)</script></html>"), "The logo must be an SVG or PNG file."},
-		{"big logo", map[string]string{"name": "Acme", "accent": "#6366F1"}, append([]byte(testPNG), make([]byte, brand.MaxLogoSize)...), "The logo must be 512 KB or smaller."},
+		{"html logo", map[string]string{"name": "Acme", "accent": "#4F46E5"}, []byte("<html><script>alert(1)</script></html>"), "The logo must be an SVG or PNG file."},
+		{"big logo", map[string]string{"name": "Acme", "accent": "#4F46E5"}, append([]byte(testPNG), make([]byte, brand.MaxLogoSize)...), "The logo must be 512 KB or smaller."},
 	}
 	for _, tc := range tests {
 		res := postMultipart(t, c, ts.URL+"/settings", tc.fields, tc.logo)
@@ -142,7 +142,7 @@ func TestSettingsLogo(t *testing.T) {
 	}
 
 	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><script>alert(1)</script><rect width="10" height="10"/></svg>`)
-	res := postMultipart(t, c, ts.URL+"/settings", map[string]string{"name": "Acme", "accent": "#6366F1", "powered_by": "1"}, svg)
+	res := postMultipart(t, c, ts.URL+"/settings", map[string]string{"name": "Acme", "accent": "#4F46E5", "powered_by": "1"}, svg)
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("upload = %d: %s", res.StatusCode, body(t, res))
 	}
@@ -190,11 +190,11 @@ func TestSettingsLogo(t *testing.T) {
 	}
 
 	// A PNG replaces it. A save without a file keeps it.
-	res = postMultipart(t, c, ts.URL+"/settings", map[string]string{"name": "Acme", "accent": "#6366F1"}, []byte(testPNG))
+	res = postMultipart(t, c, ts.URL+"/settings", map[string]string{"name": "Acme", "accent": "#4F46E5"}, []byte(testPNG))
 	if res.StatusCode != http.StatusOK || s.currentBrand().Logo.Type != "image/png" {
 		t.Fatalf("png upload = %d, type %q", res.StatusCode, s.currentBrand().Logo.Type)
 	}
-	res = postMultipart(t, c, ts.URL+"/settings", map[string]string{"name": "Acme 2", "accent": "#6366F1"}, nil)
+	res = postMultipart(t, c, ts.URL+"/settings", map[string]string{"name": "Acme 2", "accent": "#4F46E5"}, nil)
 	if res.StatusCode != http.StatusOK || s.currentBrand().Logo.Type != "image/png" {
 		t.Fatalf("save without file = %d, type %q", res.StatusCode, s.currentBrand().Logo.Type)
 	}

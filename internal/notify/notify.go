@@ -90,7 +90,7 @@ func (m Message) Color() string {
 	case KindUp:
 		return "#16A34A"
 	case KindTest:
-		return "#6366F1"
+		return "#4F46E5"
 	}
 	return "#D97706"
 }

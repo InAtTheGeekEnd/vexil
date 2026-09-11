@@ -11,8 +11,8 @@ func TestParseAccent(t *testing.T) {
 		in, want string
 		wantErr  bool
 	}{
-		{"#6366F1", "#6366F1", false},
-		{"6366f1", "#6366F1", false},
+		{"#4F46E5", "#4F46E5", false},
+		{"4f46e5", "#4F46E5", false},
 		{" #abc ", "#AABBCC", false},
 		{"abc", "#AABBCC", false},
 		{"#GGGGGG", "", true},
