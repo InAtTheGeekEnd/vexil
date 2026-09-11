@@ -47,12 +47,12 @@ func TestStatusPage(t *testing.T) {
 		t.Fatalf("status = %d", rec.Code)
 	}
 	b = rec.Body.String()
-	for _, want := range []string{"Website", "HTTP 503", `content="60"`, "Powered by Acme Watch", "<title>Status · Acme Watch</title>", "uptime-90"} {
+	for _, want := range []string{"Website", "HTTP 503", `js/status.js`, `<main class="container page page-narrow" data-status>`, "Powered by Acme Watch", "<title>Status · Acme Watch</title>", "uptime-90"} {
 		if !strings.Contains(b, want) {
 			t.Errorf("status page lacks %q", want)
 		}
 	}
-	for _, leak := range []string{"Database", "secret-host", "db.internal", "connection refused", "Log out", "/monitors/"} {
+	for _, leak := range []string{"http-equiv", "Database", "secret-host", "db.internal", "connection refused", "Log out", "/monitors/"} {
 		if strings.Contains(b, leak) {
 			t.Errorf("status page shows %q", leak)
 		}

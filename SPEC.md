@@ -508,7 +508,7 @@ All text must pass WCAG AA contrast.
 - Content: brand logo and name, overall status banner, one row per monitor with name and 90-day uptime bar, incidents from the last 14 days.
 - Target URLs and hosts are never shown on the public page.
 - Custom domain: the user points a domain at vexil through a reverse proxy. The README shows Caddy and nginx examples.
-- The page refreshes itself every 60 seconds (no SSE for the public).
+- The page updates itself every 60 seconds (no SSE for the public). A small script fetches the page and replaces only the status content in place: no reload, no focus change. It pauses while the tab is hidden.
 
 ---
 

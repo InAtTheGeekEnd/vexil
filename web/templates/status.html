@@ -1,13 +1,13 @@
 {{define "title"}}Status · {{.Brand.Name}}{{end}}
-{{define "head"}}<meta http-equiv="refresh" content="60">{{end}}
+{{define "head"}}<script src="{{asset "js/status.js"}}" defer></script>{{end}}
 {{define "body"}}
 <header class="topbar">
   <div class="container topbar-inner">
     <span class="brand">{{template "logo" .}}<span>{{.Brand.Name}}</span></span>
-    <span class="muted small">Refreshes every minute</span>
+    <span class="muted small">Updates every minute</span>
   </div>
 </header>
-<main class="container page page-narrow">
+<main class="container page page-narrow" data-status>
 {{with .Content}}
   <section class="banner banner-{{.State}}">
     <span class="dot dot-{{.State}}" aria-hidden="true"></span>
