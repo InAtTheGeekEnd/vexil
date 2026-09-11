@@ -17,9 +17,10 @@ const (
 	maxConcurrent   = 50
 	shutdownWait    = 10 * time.Second
 	pushGraceFactor = 2 // a push monitor fails after 2 x interval without a push
+	certWarnBefore  = 14 * 24 * time.Hour
 )
 
-// Notifier receives alerts. Milestone 6 adds the real channels.
+// Notifier receives alerts: DOWN, UP and certificate warnings.
 type Notifier interface {
 	Notify(ctx context.Context, ev Event)
 }
@@ -259,7 +260,7 @@ func (e *Engine) Statuses() map[int64]Status {
 
 // initialStatus rebuilds the state of a monitor from the database.
 func (e *Engine) initialStatus(ctx context.Context, m store.Monitor) (*Status, error) {
-	st := &Status{State: Pending}
+	st := &Status{State: Pending, CertWarned: m.CertWarnedAt}
 	if m.Type == store.TypePush {
 		last, err := e.store.LastSuccess(ctx, m.ID)
 		if err != nil {
@@ -435,6 +436,10 @@ func (e *Engine) handle(r result) {
 		st.CertExpiry = r.res.CertExpiry
 	}
 	ev := Event{MonitorID: r.monitorID, Prev: prev, State: st.State, Result: r.res, At: r.at, Alert: alert}
+	certWarn := r.res.OK && certExpiring(r.res.CertExpiry, r.at) && !st.CertWarned.Equal(r.res.CertExpiry)
+	if certWarn {
+		st.CertWarned = r.res.CertExpiry
+	}
 	e.mu.Unlock()
 
 	if err := e.store.InsertCheck(ctx, store.Check{
@@ -461,7 +466,26 @@ func (e *Engine) handle(r result) {
 		e.log.Info("state change", "monitor", r.monitorID, "from", prev, "to", ev.State, "error", r.res.Error)
 		go e.notifier.Notify(context.Background(), ev)
 	}
+	if certWarn {
+		// Record it first so a restart does not send the warning again.
+		if err := e.store.SetCertWarned(ctx, r.monitorID, r.res.CertExpiry); err != nil {
+			e.log.Error("record certificate warning", "monitor", r.monitorID, "err", err)
+		}
+		e.log.Info("certificate expires soon", "monitor", r.monitorID, "expiry", r.res.CertExpiry)
+		cert := ev
+		cert.Alert = AlertCert
+		go e.notifier.Notify(context.Background(), cert)
+	}
 	e.hub.Publish(ev)
+}
+
+// certExpiring reports whether a certificate expires within certWarnBefore
+// of now. An expired certificate fails the check instead.
+func certExpiring(expiry, now time.Time) bool {
+	if expiry.IsZero() || !expiry.After(now) {
+		return false
+	}
+	return expiry.Sub(now) <= certWarnBefore
 }
 
 // ErrNoChecker is returned by CheckNow for monitors that have no active

@@ -29,6 +29,7 @@ const (
 	AlertNone Alert = iota
 	AlertDown
 	AlertUp
+	AlertCert // the TLS certificate expires within certWarnBefore
 )
 
 // transition applies one result to a state and a count of failures in a
@@ -62,6 +63,7 @@ type Status struct {
 	Last       check.Result
 	LastAt     time.Time
 	CertExpiry time.Time
+	CertWarned time.Time // expiry of the certificate the warning was sent for
 	LastPush   time.Time // push monitors only
 }
 

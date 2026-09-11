@@ -483,3 +483,75 @@ func TestCheckNow(t *testing.T) {
 		t.Fatalf("missing CheckNow err = %v, want ErrNotFound", err)
 	}
 }
+
+func TestCertificateWarning(t *testing.T) {
+	env := newEnv(t)
+	ctx := context.Background()
+	soon := time.Now().Add(10 * 24 * time.Hour).Truncate(time.Second)
+	checker := &scripted{results: []check.Result{{OK: true, Latency: time.Millisecond, CertExpiry: soon}}}
+	m := env.addMonitor(t, store.TypeHTTP, checker)
+	events, stop := env.engine.Hub().Subscribe(64)
+	defer stop()
+	if err := env.engine.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Wait for three checks: the warning must go out once.
+	for i := 0; i < 3; i++ {
+		waitFor(t, events, 3*time.Second, func(ev Event) bool { return ev.MonitorID == m.ID && ev.Result.OK })
+	}
+	env.engine.Stop()
+	if got := count(env.notifier.alerts(), AlertCert); got != 1 {
+		t.Fatalf("cert alerts after three checks = %d, want 1", got)
+	}
+	saved, _ := env.store.Monitor(ctx, m.ID)
+	if !saved.CertWarnedAt.Equal(soon) {
+		t.Fatalf("CertWarnedAt = %v, want %v", saved.CertWarnedAt, soon)
+	}
+
+	// A restart with the same certificate sends nothing.
+	env2 := &testEnv{store: env.store, notifier: &recordingNotifier{}, checkers: env.checkers}
+	env2.engine = New(env.store, Options{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Notifier: env2.notifier})
+	env2.engine.interval = env.engine.interval
+	env2.engine.newChecker = env.engine.newChecker
+	events2, stop2 := env2.engine.Hub().Subscribe(64)
+	defer stop2()
+	if err := env2.engine.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, events2, 3*time.Second, func(ev Event) bool { return ev.MonitorID == m.ID && ev.Result.OK })
+	if got := count(env2.notifier.alerts(), AlertCert); got != 0 {
+		t.Fatalf("cert alerts after restart = %d, want 0", got)
+	}
+
+	// A renewed certificate far in the future sends nothing. When it is
+	// within 14 days, a new warning goes out.
+	renewed := time.Now().Add(80 * 24 * time.Hour).Truncate(time.Second)
+	checker.mu.Lock()
+	checker.results = []check.Result{{OK: true, Latency: time.Millisecond, CertExpiry: renewed}}
+	checker.i = 0
+	checker.mu.Unlock()
+	waitFor(t, events2, 3*time.Second, func(ev Event) bool { return ev.MonitorID == m.ID && ev.Result.CertExpiry.Equal(renewed) })
+	if got := count(env2.notifier.alerts(), AlertCert); got != 0 {
+		t.Fatalf("cert alerts after renewal = %d, want 0", got)
+	}
+	nearly := time.Now().Add(5 * 24 * time.Hour).Truncate(time.Second)
+	checker.mu.Lock()
+	checker.results = []check.Result{{OK: true, Latency: time.Millisecond, CertExpiry: nearly}}
+	checker.i = 0
+	checker.mu.Unlock()
+	waitFor(t, events2, 3*time.Second, func(ev Event) bool { return ev.MonitorID == m.ID && ev.Result.CertExpiry.Equal(nearly) })
+	env2.engine.Stop()
+	if got := count(env2.notifier.alerts(), AlertCert); got != 1 {
+		t.Fatalf("cert alerts for the next expiry = %d, want 1", got)
+	}
+}
+
+func count(alerts []Alert, kind Alert) int {
+	var n int
+	for _, a := range alerts {
+		if a == kind {
+			n++
+		}
+	}
+	return n
+}
