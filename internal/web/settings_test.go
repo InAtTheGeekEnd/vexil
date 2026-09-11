@@ -87,7 +87,7 @@ func TestSettingsBrand(t *testing.T) {
 	if ct := res.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/css") {
 		t.Fatalf("theme content type = %q", ct)
 	}
-	if b := body(t, res); b != ":root{--accent:#FACC15;--on-accent:#000000}\n" {
+	if b := body(t, res); !strings.HasPrefix(b, ":root{--accent:#FACC15;--on-accent:#000000;--accent-text-light:#") {
 		t.Fatalf("theme = %q", b)
 	}
 	if cc := res.Header.Get("Cache-Control"); !strings.Contains(cc, "immutable") {

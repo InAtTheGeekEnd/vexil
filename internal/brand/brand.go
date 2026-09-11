@@ -115,20 +115,59 @@ func ParseAccent(s string) (string, error) {
 	return "#" + s, nil
 }
 
-// TextOn returns "#000000" or "#FFFFFF", whichever has the higher WCAG
-// contrast ratio on the given "#RRGGBB" background.
-func TextOn(background string) string {
-	rgb, err := hex.DecodeString(strings.TrimPrefix(background, "#"))
-	if err != nil || len(rgb) != 3 {
-		return "#FFFFFF"
+// Hover shades of the accent, as app.css derives them with color-mix.
+const (
+	HoverLight = 0.12 // 12% black in the light theme
+	HoverDark  = 0.15 // 15% white in the dark theme
+)
+
+// TextOn returns "#000000" or "#FFFFFF" for text on the accent. It takes
+// the color whose lowest WCAG contrast over the accent and its two hover
+// shades is the higher one.
+func TextOn(accent string) string {
+	backgrounds := []string{accent, Mix(accent, "#000000", HoverLight), Mix(accent, "#FFFFFF", HoverDark)}
+	worst := func(text string) float64 {
+		c := math.Inf(1)
+		for _, bg := range backgrounds {
+			c = math.Min(c, Contrast(text, bg))
+		}
+		return c
 	}
-	l := 0.2126*channel(rgb[0]) + 0.7152*channel(rgb[1]) + 0.0722*channel(rgb[2])
-	white := 1.05 / (l + 0.05)
-	black := (l + 0.05) / 0.05
-	if black > white {
+	if worst("#000000") > worst("#FFFFFF") {
 		return "#000000"
 	}
 	return "#FFFFFF"
+}
+
+// Mix blends t of the color "toward" into "color" in sRGB, like CSS
+// color-mix(in srgb, color (1-t), toward t). Both are "#RRGGBB".
+func Mix(color, toward string, t float64) string {
+	a, errA := hex.DecodeString(strings.TrimPrefix(color, "#"))
+	b, errB := hex.DecodeString(strings.TrimPrefix(toward, "#"))
+	if errA != nil || errB != nil || len(a) != 3 || len(b) != 3 {
+		return color
+	}
+	out := make([]byte, 3)
+	for i := range out {
+		out[i] = byte(math.Round(float64(a[i])*(1-t) + float64(b[i])*t))
+	}
+	return "#" + strings.ToUpper(hex.EncodeToString(out))
+}
+
+// AAText is the WCAG AA contrast ratio for normal text.
+const AAText = 4.5
+
+// Readable returns the accent, or the accent mixed toward "toward" (black
+// or white) in 5% steps until it has AA contrast on the background. It
+// gives the accent text color for one theme.
+func Readable(accent, background, toward string) string {
+	for t := 0.0; t < 1; t += 0.05 {
+		c := Mix(accent, toward, t)
+		if Contrast(c, background) >= AAText {
+			return c
+		}
+	}
+	return toward
 }
 
 // Contrast returns the WCAG contrast ratio between two "#RRGGBB" colors.

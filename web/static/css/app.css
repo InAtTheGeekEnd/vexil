@@ -24,7 +24,10 @@
 
   --accent-hover: color-mix(in srgb, var(--accent) 88%, #000);
   --accent-tint: color-mix(in srgb, var(--accent) 12%, transparent);
-  --focus-ring: color-mix(in srgb, var(--accent) 30%, transparent);
+  --focus-ring: color-mix(in srgb, var(--accent-text) 30%, transparent);
+  /* Accent as text, links and focus rings. /brand/theme.css sets the
+     per-theme values so any accent has AA contrast on the page. */
+  --accent-text: var(--accent-text-light, var(--accent));
 
   --radius: 12px;
   --radius-sm: 8px;
@@ -45,6 +48,7 @@
   --down: #EF4444;
   --paused: #4B5563;
   --accent-hover: color-mix(in srgb, var(--accent) 85%, #fff);
+  --accent-text: var(--accent-text-dark, var(--accent));
   color-scheme: dark;
 }
 
@@ -60,6 +64,7 @@
     --down: #EF4444;
     --paused: #4B5563;
     --accent-hover: color-mix(in srgb, var(--accent) 85%, #fff);
+    --accent-text: var(--accent-text-dark, var(--accent));
     color-scheme: dark;
   }
 }
@@ -75,6 +80,7 @@
   --down: #DC2626;
   --paused: #9CA3AF;
   --accent-hover: color-mix(in srgb, var(--accent) 88%, #000);
+  --accent-text: var(--accent-text-light, var(--accent));
   color-scheme: light;
 }
 
@@ -99,7 +105,7 @@ body {
   flex-direction: column;
 }
 
-a { color: var(--accent); text-decoration: none; }
+a { color: var(--accent-text); text-decoration: none; }
 a:hover { text-decoration: underline; }
 code, kbd { font-family: var(--mono); font-size: 0.92em; }
 code {
@@ -224,7 +230,7 @@ svg { display: block; }
   color: var(--text);
   background: color-mix(in srgb, var(--text) 8%, transparent);
 }
-.theme-toggle button:focus-visible, .range-toggle button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.theme-toggle button:focus-visible, .range-toggle button:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 1px; }
 .range-toggle button { width: auto; padding: 0 10px; font: inherit; font-size: 12px; font-weight: 600; white-space: nowrap; }
 
 /* --- Buttons --- */
@@ -247,7 +253,7 @@ svg { display: block; }
   transition: background-color var(--ease), border-color var(--ease), color var(--ease);
 }
 .btn:hover { text-decoration: none; }
-.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
 .btn:disabled, .btn[aria-disabled="true"] { opacity: 0.5; cursor: not-allowed; }
 .btn-primary { background: var(--accent); color: var(--on-accent, #fff); }
 .btn-primary:hover { background: var(--accent-hover); }
@@ -283,7 +289,7 @@ svg { display: block; }
 .field input::placeholder { color: var(--muted); }
 .input:focus, .field input:focus, .field select:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--accent-text);
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
 .field input:disabled { opacity: 0.6; cursor: not-allowed; }
@@ -550,7 +556,7 @@ body.auth { align-items: center; justify-content: center; padding: 24px 16px; }
 .mon-link { color: inherit; }
 .mon-link::after { content: ""; position: absolute; inset: 0; }
 .mon-link:focus-visible { outline: none; }
-.mon-link:focus-visible::after { outline: 2px solid var(--accent); outline-offset: -2px; }
+.mon-link:focus-visible::after { outline: 2px solid var(--accent-text); outline-offset: -2px; }
 .mon-handle, .mon-uptime { position: relative; z-index: 1; }
 
 .mon-handle {
@@ -572,7 +578,7 @@ body.auth { align-items: center; justify-content: center; padding: 24px 16px; }
 }
 .mon-handle:hover, .mon-row:hover .mon-handle, .mon-handle:focus-visible { opacity: 1; }
 .mon-handle:active { cursor: grabbing; }
-.mon-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 4px; }
+.mon-handle:focus-visible { outline: 2px solid var(--accent-text); outline-offset: -2px; border-radius: 4px; }
 .mon-handle svg { width: 12px; height: 16px; }
 .mon-row > .dot { grid-area: dot; }
 .mon-name { grid-area: name; display: flex; flex-direction: column; min-width: 0; }
@@ -701,12 +707,12 @@ body.auth { align-items: center; justify-content: center; padding: 24px 16px; }
 .type-card-body .type-name { font-weight: 600; }
 .type-card:hover .type-card-body { border-color: var(--muted); }
 .type-card input:checked + .type-card-body {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
+  border-color: var(--accent-text);
+  box-shadow: 0 0 0 1px var(--accent-text);
   background: color-mix(in srgb, var(--accent) 4%, var(--surface));
 }
-.type-card input:checked + .type-card-body .icon { color: var(--accent); }
-.type-card input:focus-visible + .type-card-body { outline: 2px solid var(--accent); outline-offset: 2px; }
+.type-card input:checked + .type-card-body .icon { color: var(--accent-text); }
+.type-card input:focus-visible + .type-card-body { outline: 2px solid var(--accent-text); outline-offset: 2px; }
 
 /* Only the fields of the chosen type are visible. */
 .mon-form .for-http, .mon-form .for-tcp, .mon-form .for-ping, .mon-form .for-dns, .mon-form .for-push { display: none; }
@@ -786,7 +792,7 @@ body.auth { align-items: center; justify-content: center; padding: 24px 16px; }
 }
 .switch[aria-checked="true"] { background: var(--up); }
 .switch[aria-checked="true"] .knob { transform: translateX(16px); }
-.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.switch:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
 .field-short { max-width: 220px; }
 .field > span .muted { font-weight: 400; }
 

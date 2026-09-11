@@ -112,8 +112,25 @@ func (s *Server) handleLogo(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(b.Logo.Data)
 }
 
-// handleTheme serves the accent color as a tiny style sheet. Inline styles
-// are blocked by the page policy, so the color comes from this URL.
+// The page backgrounds that accent text sits on, from the tokens in
+// app.css. Light text has the least contrast on the lighter dark surface,
+// and dark text on the darker light page, so these are the worst cases.
+const (
+	lightBackground = "#FAFAFA" // --bg in the light theme
+	darkBackground  = "#12151A" // --surface in the dark theme
+)
+
+// themeCSS returns the accent tokens for one accent: the accent, the text
+// color on it, and an accent text color per theme that has AA contrast.
+func themeCSS(accent string) string {
+	return ":root{--accent:" + accent +
+		";--on-accent:" + brand.TextOn(accent) +
+		";--accent-text-light:" + brand.Readable(accent, lightBackground, "#000000") +
+		";--accent-text-dark:" + brand.Readable(accent, darkBackground, "#FFFFFF") + "}\n"
+}
+
+// handleTheme serves the accent tokens as a tiny style sheet. Inline
+// styles are blocked by the page policy, so they come from this URL.
 func (s *Server) handleTheme(w http.ResponseWriter, r *http.Request) {
 	b := s.currentBrand()
 	h := w.Header()
@@ -123,5 +140,5 @@ func (s *Server) handleTheme(w http.ResponseWriter, r *http.Request) {
 	} else {
 		h.Set("Cache-Control", "no-cache")
 	}
-	_, _ = w.Write([]byte(":root{--accent:" + b.Accent + ";--on-accent:" + brand.TextOn(b.Accent) + "}\n"))
+	_, _ = w.Write([]byte(themeCSS(b.Accent)))
 }

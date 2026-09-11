@@ -47,6 +47,59 @@ func TestTextOnPassesAA(t *testing.T) {
 	}
 }
 
+func TestMix(t *testing.T) {
+	tests := []struct {
+		color, toward string
+		t             float64
+		want          string
+	}{
+		{"#4F46E5", "#000000", 0, "#4F46E5"},
+		{"#4F46E5", "#FFFFFF", 1, "#FFFFFF"},
+		{"#000000", "#FFFFFF", 0.5, "#808080"},
+		{"#4F46E5", "#000000", HoverLight, "#463ECA"},
+		{"bad", "#FFFFFF", 0.5, "bad"},
+	}
+	for _, tc := range tests {
+		if got := Mix(tc.color, tc.toward, tc.t); got != tc.want {
+			t.Errorf("Mix(%s, %s, %.2f) = %s, want %s", tc.color, tc.toward, tc.t, got, tc.want)
+		}
+	}
+}
+
+// TestReadableHasAAContrast checks accent text on the page backgrounds
+// from app.css for a range of accents, including the default.
+func TestReadableHasAAContrast(t *testing.T) {
+	const light, dark = "#FAFAFA", "#12151A"
+	accents := []string{Default.Accent, "#6366F1", "#FACC15", "#000000", "#FFFFFF", "#808080", "#16A34A", "#DC2626", "#0EA5E9"}
+	for _, accent := range accents {
+		if got := Readable(accent, light, "#000000"); Contrast(got, light) < AAText {
+			t.Errorf("Readable(%s, light) = %s, contrast %.2f", accent, got, Contrast(got, light))
+		}
+		if got := Readable(accent, dark, "#FFFFFF"); Contrast(got, dark) < AAText {
+			t.Errorf("Readable(%s, dark) = %s, contrast %.2f", accent, got, Contrast(got, dark))
+		}
+		text := TextOn(accent)
+		for _, bg := range []string{accent, Mix(accent, "#000000", HoverLight), Mix(accent, "#FFFFFF", HoverDark)} {
+			if c := Contrast(text, bg); c < 3 {
+				t.Errorf("TextOn(%s) = %s has contrast %.2f on %s", accent, text, c, bg)
+			}
+		}
+	}
+	// The default accent passes as it is in the light theme and gets a
+	// lighter tint in the dark theme.
+	if got := Readable(Default.Accent, light, "#000000"); got != Default.Accent {
+		t.Errorf("light accent text = %s, want the accent itself", got)
+	}
+	if got := Readable(Default.Accent, dark, "#FFFFFF"); got == Default.Accent {
+		t.Error("dark accent text is the accent itself, which fails AA on the dark surface")
+	}
+	for _, bg := range []string{Default.Accent, Mix(Default.Accent, "#000000", HoverLight), Mix(Default.Accent, "#FFFFFF", HoverDark)} {
+		if c := Contrast(TextOn(Default.Accent), bg); c < AAText {
+			t.Errorf("default button text has contrast %.2f on %s", c, bg)
+		}
+	}
+}
+
 func TestParseLogo(t *testing.T) {
 	png := append([]byte("\x89PNG\r\n\x1a\n"), make([]byte, 20)...)
 	svg := []byte(`<?xml version="1.0"?><!-- c --><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"/>`)
