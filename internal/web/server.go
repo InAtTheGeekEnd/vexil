@@ -150,6 +150,7 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 		body["status"] = "fail"
 		body["database"] = shortReason(err)
 	}
+	// TODO(milestone 3): report the real engine state.
 	if err := s.engineReady(); err != nil {
 		body["status"] = "fail"
 		body["engine"] = shortReason(err)

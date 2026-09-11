@@ -21,6 +21,7 @@ import (
 	"github.com/InAtTheGeekEnd/vexil/internal/config"
 	"github.com/InAtTheGeekEnd/vexil/internal/store"
 	"github.com/InAtTheGeekEnd/vexil/internal/web"
+	"golang.org/x/term"
 )
 
 func main() {
@@ -133,8 +134,18 @@ func resetPassword(cfg config.Config) error {
 	return nil
 }
 
+// prompt reads one line from stdin. On a terminal it hides the typed text.
 func prompt(in *bufio.Reader, label string) (string, error) {
 	fmt.Print(label)
+	fd := int(os.Stdin.Fd())
+	if term.IsTerminal(fd) {
+		b, err := term.ReadPassword(fd)
+		fmt.Println()
+		if err != nil {
+			return "", fmt.Errorf("read input: %w", err)
+		}
+		return string(b), nil
+	}
 	line, err := in.ReadString('\n')
 	if err != nil && line == "" {
 		return "", fmt.Errorf("read input: %w", err)
