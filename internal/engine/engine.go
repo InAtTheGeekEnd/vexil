@@ -14,10 +14,15 @@ import (
 )
 
 const (
-	maxConcurrent   = 50
-	shutdownWait    = 10 * time.Second
-	pushGraceFactor = 2 // a push monitor fails after 2 x interval without a push
-	certWarnBefore  = 14 * 24 * time.Hour
+	maxConcurrent  = 50
+	shutdownWait   = 10 * time.Second
+	certWarnBefore = 14 * 24 * time.Hour
+
+	// Timing from SPEC.md sections 4.4, 5.5 and 6.3. Tests shorten these
+	// through the Engine fields.
+	defaultRetryDelay   = 30 * time.Second // next check after a failed check
+	defaultMaxOffset    = 60 * time.Second // upper limit of the random start offset
+	defaultPushMinExtra = 30 * time.Second // least extra time a push may be late
 )
 
 // Notifier receives alerts: DOWN, UP and certificate warnings.
@@ -53,9 +58,12 @@ type Engine struct {
 	hub      *Hub
 	notifier Notifier
 
-	// newChecker and interval are replaced in tests.
-	newChecker func(store.Monitor) (check.Checker, error)
-	interval   func(store.Monitor) time.Duration
+	// newChecker and the timing fields are replaced in tests.
+	newChecker   func(store.Monitor) (check.Checker, error)
+	interval     func(store.Monitor) time.Duration
+	retryDelay   time.Duration
+	maxOffset    time.Duration
+	pushMinExtra time.Duration
 
 	sem     chan struct{}
 	results chan result
@@ -81,13 +89,16 @@ func New(st *store.Store, opts Options) *Engine {
 		newChecker: func(m store.Monitor) (check.Checker, error) {
 			return check.New(check.Spec{Type: m.Type, Target: m.Target, Keyword: m.Keyword, ExpectedIP: m.ExpectedIP})
 		},
-		interval: store.Monitor.Interval,
-		sem:      make(chan struct{}, maxConcurrent),
-		results:  make(chan result, 256),
-		stopCh:   make(chan struct{}),
-		done:     make(chan struct{}),
-		runners:  make(map[int64]*runner),
-		status:   make(map[int64]*Status),
+		interval:     store.Monitor.Interval,
+		retryDelay:   defaultRetryDelay,
+		maxOffset:    defaultMaxOffset,
+		pushMinExtra: defaultPushMinExtra,
+		sem:          make(chan struct{}, maxConcurrent),
+		results:      make(chan result, 256),
+		stopCh:       make(chan struct{}),
+		done:         make(chan struct{}),
+		runners:      make(map[int64]*runner),
+		status:       make(map[int64]*Status),
 	}
 	if e.log == nil {
 		e.log = slog.Default()
@@ -316,8 +327,10 @@ func (e *Engine) startRunnerLocked(m store.Monitor) {
 	go e.run(ctx, m, r)
 }
 
-// run is the goroutine of one monitor: a random start offset, then a tick
-// every interval.
+// run is the goroutine of one monitor. Each tick says how long to wait for
+// the next one: the interval after a success, retryDelay after a failure.
+// The wait counts from the start of the tick so a slow check does not
+// shift the schedule.
 func (e *Engine) run(ctx context.Context, m store.Monitor, r *runner) {
 	defer close(r.done)
 
@@ -330,40 +343,79 @@ func (e *Engine) run(ctx context.Context, m store.Monitor, r *runner) {
 		return
 	}
 
-	offset := time.Duration(rand.Int64N(int64(interval)))
-	select {
-	case <-time.After(offset):
-	case <-ctx.Done():
-		return
-	}
-	tick(ctx)
-
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	timer := time.NewTimer(e.firstDelay(m, interval))
+	defer timer.Stop()
 	for {
 		select {
-		case <-ticker.C:
-			tick(ctx)
+		case <-timer.C:
 		case <-ctx.Done():
 			return
 		}
+		started := time.Now()
+		next := tick(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+		timer.Reset(max(0, time.Until(started.Add(next))))
 	}
 }
 
-// tickFunc returns what one tick does for a monitor.
-func (e *Engine) tickFunc(m store.Monitor, interval time.Duration) func(context.Context) {
+// firstDelay is the wait before the first tick of a runner. It counts from
+// the last check in the status, which Start restores from the database, so
+// a restart does not reset the schedule. A monitor with no check yet gets a
+// random offset of at most maxOffset, or the interval if that is shorter.
+// A push monitor ticks at once: its tick computes the deadline itself.
+func (e *Engine) firstDelay(m store.Monitor, interval time.Duration) time.Duration {
 	if m.Type == store.TypePush {
+		return 0
+	}
+	e.mu.Lock()
+	st := e.status[m.ID]
+	var last time.Time
+	var ok bool
+	if st != nil {
+		last, ok = st.LastAt, st.Last.OK
+	}
+	e.mu.Unlock()
+	if last.IsZero() {
+		limit := min(e.maxOffset, interval)
+		if limit <= 0 {
+			return 0
+		}
+		return rand.N(limit)
+	}
+	wait := interval
+	if !ok {
+		wait = e.retryDelay
+	}
+	return max(0, time.Until(last.Add(wait)))
+}
+
+// pushGrace is how long a push monitor may go without a push: the interval
+// plus 25%, with at least pushMinExtra extra (SPEC.md section 5.5).
+func (e *Engine) pushGrace(interval time.Duration) time.Duration {
+	return interval + max(interval/4, e.pushMinExtra)
+}
+
+// tickFunc returns what one tick does for a monitor. The function returns
+// the wait until the next tick.
+func (e *Engine) tickFunc(m store.Monitor, interval time.Duration) func(context.Context) time.Duration {
+	if m.Type == store.TypePush {
+		grace := e.pushGrace(interval)
 		start := time.Now()
-		return func(ctx context.Context) {
+		return func(ctx context.Context) time.Duration {
+			now := time.Now()
 			e.mu.Lock()
 			ref := start
-			if st := e.status[m.ID]; st != nil && st.LastPush.After(ref) {
-				ref = st.LastPush
+			if st := e.status[m.ID]; st != nil && !st.LastPush.IsZero() {
+				ref = st.LastPush // restored from the database at start
 			}
 			e.mu.Unlock()
-			if time.Since(ref) > pushGraceFactor*interval {
-				e.enqueue(result{monitorID: m.ID, res: check.Result{Error: "no push received"}, at: time.Now()})
+			if wait := ref.Add(grace).Sub(now); wait > 0 {
+				return wait
 			}
+			e.enqueue(result{monitorID: m.ID, res: check.Result{Error: "no push received"}, at: now})
+			return e.retryDelay
 		}
 	}
 
@@ -372,11 +424,11 @@ func (e *Engine) tickFunc(m store.Monitor, interval time.Duration) func(context.
 		e.log.Error("monitor has no checker", "monitor", m.ID, "err", err)
 		return nil
 	}
-	return func(ctx context.Context) {
+	return func(ctx context.Context) time.Duration {
 		select {
 		case e.sem <- struct{}{}:
 		case <-ctx.Done():
-			return
+			return 0
 		}
 		defer func() { <-e.sem }()
 
@@ -384,9 +436,13 @@ func (e *Engine) tickFunc(m store.Monitor, interval time.Duration) func(context.
 		res := checker.Check(cctx)
 		cancel()
 		if ctx.Err() != nil {
-			return // shutting down or reloading: drop the result
+			return 0 // shutting down or reloading: drop the result
 		}
 		e.enqueue(result{monitorID: m.ID, res: res, at: time.Now()})
+		if res.OK {
+			return interval
+		}
+		return e.retryDelay
 	}
 }
 

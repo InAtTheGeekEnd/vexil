@@ -112,6 +112,7 @@ Only a person with access to the server can reset the password. This is the secu
 |---|---|
 | Check timeout | 10 seconds |
 | Failures before DOWN | 2 checks in a row |
+| Next check after a failed check | 30 seconds, not the full interval |
 | Successes before UP | 1 check |
 | HTTP redirects | Follow, maximum 10 |
 | Keyword search limit | First 1 MB of the body |
@@ -160,7 +161,7 @@ All monitors have: **Name**, **Interval** (30s, 1m, 5m, 15m, 30m, 1h, 6h, 12h, 2
 
 - No fields. vexil generates a secret URL: `{BASE_URL}/push/{token}`.
 - An external job (cron, backup script) calls the URL with GET or POST.
-- The monitor goes DOWN when no push arrives within 2 x interval.
+- The monitor goes DOWN when no push arrives within the interval plus 25%, with a minimum of 30 seconds extra.
 - The detail page shows the URL and a copy button, plus a one-line `curl` example.
 
 ---
@@ -188,7 +189,8 @@ vexil sends each alert once. There are no repeat reminders.
 ### 6.3 Design
 
 - One goroutine per monitor with its own ticker.
-- Add a random start offset (0 to interval) so checks do not all run at the same second.
+- Add a random start offset so checks do not all run at the same second. The offset is at most 60 seconds, or the interval if that is shorter.
+- After a restart, schedule the next check from the last check time in the database, not from the start time. A push monitor keeps its last push time.
 - A semaphore limits concurrent checks to 50.
 - Checkers send results into one channel. One writer goroutine writes to SQLite. This avoids lock contention.
 - The writer publishes each result to an in-memory event hub. The SSE handler reads from the hub.
@@ -615,7 +617,7 @@ Build in this order. Each milestone ends with working, tested code.
 ## 19. Acceptance criteria for v1
 
 - A new user runs one command and adds a working monitor in less than 60 seconds.
-- A DOWN alert arrives within 2 x interval + 15 seconds of the outage.
+- A DOWN alert arrives within interval + 60 seconds of the outage.
 - Every page looks finished in light and dark themes, on desktop and on a phone.
 - The Settings page has fewer than 10 fields in total.
 - A white-label user can remove every visible trace of the name "vexil" through the UI.

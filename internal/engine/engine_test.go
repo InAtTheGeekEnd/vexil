@@ -92,6 +92,9 @@ func (n *recordingNotifier) alerts() []Alert {
 	return out
 }
 
+// testScale is one second of real timing in the tests.
+const testScale = 20 * time.Millisecond
+
 type testEnv struct {
 	store    *store.Store
 	engine   *Engine
@@ -109,10 +112,13 @@ func newEnv(t *testing.T) *testEnv {
 	t.Cleanup(func() { st.Close() })
 	env := &testEnv{store: st, notifier: &recordingNotifier{}, checkers: map[int64]check.Checker{}}
 	env.engine = New(st, Options{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Notifier: env.notifier})
-	// Intervals are stored in seconds. Tests run them as milliseconds x 20.
+	// Intervals are stored in seconds. Tests run every second as testScale.
 	env.engine.interval = func(m store.Monitor) time.Duration {
-		return time.Duration(m.IntervalS) * 20 * time.Millisecond
+		return time.Duration(m.IntervalS) * testScale
 	}
+	env.engine.retryDelay = 30 * testScale
+	env.engine.maxOffset = 60 * testScale
+	env.engine.pushMinExtra = 30 * testScale
 	env.engine.newChecker = func(m store.Monitor) (check.Checker, error) {
 		env.mu.Lock()
 		defer env.mu.Unlock()
@@ -270,7 +276,8 @@ func TestPushMonitor(t *testing.T) {
 	if up.Prev != Pending {
 		t.Fatalf("push UP event = %+v", up)
 	}
-	// No further pushes: the monitor fails after 2 x interval and goes DOWN.
+	// No further pushes: the monitor fails after the grace period, again
+	// after the retry delay, and goes DOWN.
 	down := waitFor(t, events, 3*time.Second, func(ev Event) bool { return ev.MonitorID == m.ID && ev.State == Down })
 	if down.Result.Error != "no push received" || down.Alert != AlertDown {
 		t.Fatalf("push DOWN event = %+v", down)
@@ -566,4 +573,194 @@ func count(alerts []Alert, kind Alert) int {
 		}
 	}
 	return n
+}
+
+// TestRetryAfterFailure covers SPEC.md section 4.4: after a failed check the
+// next check runs after retryDelay, not the full interval. Two failures in a
+// row still mean DOWN.
+func TestRetryAfterFailure(t *testing.T) {
+	env := newEnv(t)
+	ctx := context.Background()
+	m := env.addMonitor(t, store.TypeHTTP, &scripted{results: []check.Result{
+		{Error: "HTTP 503", StatusCode: 503},
+	}})
+	// The interval is far longer than the retry delay.
+	if err := env.store.UpdateMonitor(ctx, store.Monitor{ID: m.ID, Name: m.Name, Type: m.Type, Target: m.Target, IntervalS: 300}); err != nil {
+		t.Fatal(err)
+	}
+	events, stop := env.engine.Hub().Subscribe(64)
+	defer stop()
+	if err := env.engine.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	first := waitFor(t, events, 3*time.Second, func(ev Event) bool { return ev.MonitorID == m.ID })
+	if first.State != Pending || first.Alert != AlertNone {
+		t.Fatalf("first failure event = %+v, want PENDING without alert", first)
+	}
+	firstAt := time.Now()
+	down := waitFor(t, events, 3*time.Second, func(ev Event) bool { return ev.State == Down })
+	if down.Alert != AlertDown {
+		t.Fatalf("DOWN event = %+v", down)
+	}
+	retry, interval := env.engine.retryDelay, 300*testScale
+	if got := time.Since(firstAt); got < retry/2 || got >= interval {
+		t.Fatalf("second check after %v, want about %v (interval %v)", got, retry, interval)
+	}
+}
+
+// TestPushGrace covers SPEC.md section 5.5: the grace is the interval plus
+// 25%, with at least pushMinExtra extra.
+func TestPushGrace(t *testing.T) {
+	e := New(nil, Options{})
+	tests := []struct {
+		interval time.Duration
+		want     time.Duration
+	}{
+		{30 * time.Second, 60 * time.Second},
+		{time.Minute, 90 * time.Second},
+		{2 * time.Minute, 150 * time.Second},
+		{5 * time.Minute, 375 * time.Second},
+		{24 * time.Hour, 30 * time.Hour},
+	}
+	for _, tt := range tests {
+		if got := e.pushGrace(tt.interval); got != tt.want {
+			t.Errorf("pushGrace(%v) = %v, want %v", tt.interval, got, tt.want)
+		}
+	}
+}
+
+// TestPushGraceTiming checks that a push monitor fails only after the grace
+// period, and that the deadline counts from the last push.
+func TestPushGraceTiming(t *testing.T) {
+	env := newEnv(t)
+	ctx := context.Background()
+	m := env.addMonitor(t, store.TypePush, nil)
+	if err := env.store.UpdateMonitor(ctx, store.Monitor{ID: m.ID, Name: m.Name, Type: m.Type, Target: m.Target, IntervalS: 50}); err != nil {
+		t.Fatal(err)
+	}
+	events, stop := env.engine.Hub().Subscribe(64)
+	defer stop()
+	if err := env.engine.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.engine.Push(ctx, m.PushToken); err != nil {
+		t.Fatal(err)
+	}
+	pushed := time.Now()
+	waitFor(t, events, 2*time.Second, func(ev Event) bool { return ev.State == Up })
+	grace := env.engine.pushGrace(50 * testScale) // 1s + 600ms
+	fail := waitFor(t, events, 3*time.Second, func(ev Event) bool { return !ev.Result.OK })
+	since := time.Since(pushed)
+	if fail.Result.Error != "no push received" || since < grace || since > grace+500*time.Millisecond {
+		t.Fatalf("first miss after %v (grace %v): %+v", since, grace, fail)
+	}
+}
+
+// TestFirstDelay covers SPEC.md section 6.3: the first check counts from
+// the last check, and a new monitor gets a small random offset.
+func TestFirstDelay(t *testing.T) {
+	e := New(nil, Options{})
+	now := time.Now()
+	const tol = 2 * time.Second
+	tests := []struct {
+		name     string
+		interval time.Duration
+		last     time.Time
+		ok       bool
+		wantMin  time.Duration
+		wantMax  time.Duration
+	}{
+		{"no check, long interval: offset up to 60s", time.Hour, time.Time{}, false, 0, 60 * time.Second},
+		{"no check, short interval: offset up to the interval", 30 * time.Second, time.Time{}, false, 0, 30 * time.Second},
+		{"ok check 10s ago, 1m interval", time.Minute, now.Add(-10 * time.Second), true, 50*time.Second - tol, 50 * time.Second},
+		{"ok check 2m ago, 1m interval: overdue", time.Minute, now.Add(-2 * time.Minute), true, 0, 0},
+		{"failed check 10s ago: retry at 30s", time.Hour, now.Add(-10 * time.Second), false, 20*time.Second - tol, 20 * time.Second},
+	}
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := store.Monitor{ID: int64(i + 1), Type: store.TypeHTTP}
+			e.status[m.ID] = &Status{LastAt: tt.last, Last: check.Result{OK: tt.ok}}
+			got := e.firstDelay(m, tt.interval)
+			if got < tt.wantMin || got > tt.wantMax {
+				t.Fatalf("firstDelay = %v, want %v to %v", got, tt.wantMin, tt.wantMax)
+			}
+		})
+	}
+}
+
+// TestScheduleSurvivesRestart starts the engine with checks already in the
+// database and expects the next check at the time the schedule says, not
+// at start. The push monitor keeps its last push time.
+func TestScheduleSurvivesRestart(t *testing.T) {
+	ctx := context.Background()
+	t.Run("http waits for the rest of the interval", func(t *testing.T) {
+		env := newEnv(t)
+		m := &store.Monitor{Name: "m", Type: store.TypeHTTP, Target: "x", IntervalS: 100} // 2s
+		if err := env.store.CreateMonitor(ctx, m); err != nil {
+			t.Fatal(err)
+		}
+		// Check times are stored in whole seconds. The last check was 0 to
+		// 1 second ago, so the next one is due in 1 to 2 seconds.
+		last := time.Now().Truncate(time.Second)
+		if err := env.store.InsertCheck(ctx, store.Check{MonitorID: m.ID, At: last, OK: true}); err != nil {
+			t.Fatal(err)
+		}
+		events, stop := env.engine.Hub().Subscribe(64)
+		defer stop()
+		started := time.Now()
+		if err := env.engine.Start(ctx); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case ev := <-events:
+			t.Fatalf("check ran %v after start: %+v", time.Since(started), ev)
+		case <-time.After(800 * time.Millisecond):
+		}
+		ev := waitFor(t, events, 2*time.Second, func(ev Event) bool { return ev.MonitorID == m.ID })
+		want := last.Add(2 * time.Second)
+		if ev.At.Before(want) || ev.At.After(want.Add(500*time.Millisecond)) {
+			t.Fatalf("check ran at %v, want about %v", ev.At, want)
+		}
+	})
+	t.Run("http overdue runs at once", func(t *testing.T) {
+		env := newEnv(t)
+		m := &store.Monitor{Name: "m", Type: store.TypeHTTP, Target: "x", IntervalS: 1000} // 20s
+		if err := env.store.CreateMonitor(ctx, m); err != nil {
+			t.Fatal(err)
+		}
+		if err := env.store.InsertCheck(ctx, store.Check{MonitorID: m.ID, At: time.Now().Add(-time.Hour), OK: true}); err != nil {
+			t.Fatal(err)
+		}
+		events, stop := env.engine.Hub().Subscribe(64)
+		defer stop()
+		if err := env.engine.Start(ctx); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, events, 500*time.Millisecond, func(ev Event) bool { return ev.MonitorID == m.ID })
+	})
+	t.Run("push keeps its last push time", func(t *testing.T) {
+		env := newEnv(t)
+		m := &store.Monitor{Name: "m", Type: store.TypePush, Target: "x", IntervalS: 50} // grace 1.6s
+		if err := env.store.CreateMonitor(ctx, m); err != nil {
+			t.Fatal(err)
+		}
+		// The last push was 1s ago, so the grace ends 600ms after start.
+		last := time.Now().Add(-time.Second).Truncate(time.Second)
+		if err := env.store.InsertCheck(ctx, store.Check{MonitorID: m.ID, At: last, OK: true}); err != nil {
+			t.Fatal(err)
+		}
+		events, stop := env.engine.Hub().Subscribe(64)
+		defer stop()
+		if err := env.engine.Start(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if st, _ := env.engine.Status(m.ID); !st.LastPush.Equal(last) {
+			t.Fatalf("LastPush = %v, want %v", st.LastPush, last)
+		}
+		fail := waitFor(t, events, 3*time.Second, func(ev Event) bool { return ev.MonitorID == m.ID })
+		want := last.Add(env.engine.pushGrace(50 * testScale))
+		if fail.Result.OK || fail.At.Before(want) || fail.At.After(want.Add(500*time.Millisecond)) {
+			t.Fatalf("miss at %v, want about %v: %+v", fail.At, want, fail)
+		}
+	})
 }

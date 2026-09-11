@@ -78,7 +78,7 @@
           {{with index .Errors "expected_ip"}}<span class="error">{{.}}</span>{{else}}<span class="hint">The check fails if no record matches this address.</span>{{end}}
         </label>
       </div>
-      <p class="for-push muted">{{$.Brand.Name}} creates a secret URL for this monitor when you save. Your job calls that URL on every run. The monitor goes down when two intervals pass without a call.</p>
+      <p class="for-push muted">{{$.Brand.Name}} creates a secret URL for this monitor when you save. Your job calls that URL on every run. The monitor goes down when a call is late by more than a quarter of the interval, or 30 seconds if that is more.</p>
 
       <label class="field{{if index .Errors "name"}} invalid{{end}}">
         <span>Name</span>
