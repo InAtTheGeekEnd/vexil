@@ -27,6 +27,19 @@ const testPassword = "correct horse battery"
 
 func newTestServer(t *testing.T, opts Options) (*Server, *store.Store) {
 	t.Helper()
+	return newServer(t, opts, true)
+}
+
+// newIdleServer is newTestServer with an engine that is never started. No
+// check can run in the background, so a page shows exactly the state the
+// test put in the store and the engine.
+func newIdleServer(t *testing.T, opts Options) (*Server, *store.Store) {
+	t.Helper()
+	return newServer(t, opts, false)
+}
+
+func newServer(t *testing.T, opts Options, start bool) (*Server, *store.Store) {
+	t.Helper()
 	st, err := store.Open(context.Background(), t.TempDir())
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
@@ -37,10 +50,12 @@ func newTestServer(t *testing.T, opts Options) (*Server, *store.Store) {
 	}
 	if opts.Engine == nil {
 		opts.Engine = engine.New(st, engine.Options{Log: opts.Log})
-		if err := opts.Engine.Start(context.Background()); err != nil {
-			t.Fatalf("engine.Start: %v", err)
+		if start {
+			if err := opts.Engine.Start(context.Background()); err != nil {
+				t.Fatalf("engine.Start: %v", err)
+			}
+			t.Cleanup(opts.Engine.Stop)
 		}
-		t.Cleanup(opts.Engine.Stop)
 	}
 	if opts.Notifier == nil {
 		opts.Notifier = notify.NewService(st, notify.Options{Log: opts.Log, Brand: brand.Default.Name})

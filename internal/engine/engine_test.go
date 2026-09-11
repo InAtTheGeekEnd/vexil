@@ -211,8 +211,10 @@ func TestEngineStateChangesAndIncidents(t *testing.T) {
 	if err != nil || len(checks) < 5 {
 		t.Fatalf("checks written = %d, %v", len(checks), err)
 	}
-	// Alerts: exactly one DOWN and one UP, in that order.
-	time.Sleep(50 * time.Millisecond)
+	// Alerts: exactly one DOWN and one UP, in that order. Notify runs in
+	// its own goroutine, so wait for both before reading the order.
+	waitAlerts(t, env.notifier, AlertDown, 1)
+	waitAlerts(t, env.notifier, AlertUp, 1)
 	if got := env.notifier.alerts(); len(got) != 2 || got[0] != AlertDown || got[1] != AlertUp {
 		t.Fatalf("alerts = %v, want [DOWN UP]", got)
 	}

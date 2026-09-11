@@ -11,7 +11,9 @@ import (
 )
 
 func TestMonitorDetailPage(t *testing.T) {
-	s, st := newTestServer(t, Options{})
+	// The engine never starts, so no check of its own can change the page
+	// before the test reads it.
+	s, st := newIdleServer(t, Options{})
 	ctx := context.Background()
 	m := &store.Monitor{Name: "Shop", Type: store.TypeHTTP, Target: "https://shop.example.com", IntervalS: 60}
 	if err := st.CreateMonitor(ctx, m); err != nil {
@@ -38,7 +40,7 @@ func TestMonitorDetailPage(t *testing.T) {
 	if err := s.engine.Reload(ctx, m.ID); err != nil {
 		t.Fatal(err)
 	}
-	// Give the restored engine state: the newest check is a success.
+	// Reload registers the monitor as pending, as the create form does.
 	ts, c := loggedIn(t, s, st)
 	b := body(t, get(t, c, ts.URL+"/monitors/"+strconv.FormatInt(m.ID, 10)))
 	for _, want := range []string{
