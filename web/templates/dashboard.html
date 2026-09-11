@@ -2,10 +2,35 @@
 {{define "body"}}
 {{template "header" .}}
 <main class="container page">
+{{with .Content}}
+{{if .Rows}}
+  <div class="page-head dash-head">
+    <div>
+      <h1 class="t-28"><span class="dot dot-{{.State}}" aria-hidden="true"></span>{{.Headline}}</h1>
+      <p class="muted">{{.Count}}</p>
+    </div>
+    <a class="btn btn-primary" href="/monitors/new">Add monitor</a>
+  </div>
+  <ul class="monitors" id="monitors">
+  {{range .Rows}}
+    <li class="mon-row mon-{{.State}}" data-id="{{.ID}}">
+      <button type="button" class="mon-handle" aria-label="Move {{.Name}}" title="Drag to reorder, or press the up or down arrow key"><svg viewBox="0 0 12 16" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="3" r="1.4"/><circle cx="8.5" cy="3" r="1.4"/><circle cx="3.5" cy="8" r="1.4"/><circle cx="8.5" cy="8" r="1.4"/><circle cx="3.5" cy="13" r="1.4"/><circle cx="8.5" cy="13" r="1.4"/></svg></button>
+      <span class="dot dot-{{.State}}"><span class="sr-only">{{.StateLabel}}</span></span>
+      <span class="mon-name"><a class="mon-link w-600" href="/monitors/{{.ID}}">{{.Name}}</a><span class="muted small">{{.Target}}</span></span>
+      <span class="mon-uptime uptime" aria-label="Uptime for the last 30 days">{{range .Uptime}}<span class="seg {{.Class}}" data-tip="{{.Tip}}"></span>{{end}}</span>
+      <span class="mon-pct">{{if .UptimePct}}{{.UptimePct}}<small>%</small>{{else}}<span class="muted small">No data</span>{{end}}</span>
+      <span class="mon-spark">{{.Spark}}</span>
+      <span class="mon-checked muted small">{{.Checked}}</span>
+    </li>
+  {{end}}
+  </ul>
+{{else}}
   <section class="empty">
     <p class="lead">No monitors yet.</p>
     <a class="btn btn-primary" href="/monitors/new">Add your first monitor</a>
   </section>
+{{end}}
+{{end}}
 </main>
 {{template "footer" .}}
 {{end}}

@@ -77,7 +77,7 @@ func serve(cfg config.Config, log *slog.Logger) error {
 	}
 	defer eng.Stop()
 
-	srv, err := web.New(st, web.Options{Log: log, Engine: eng})
+	srv, err := web.New(st, web.Options{Log: log, Engine: eng, BaseURL: cfg.BaseURL})
 	if err != nil {
 		return err
 	}

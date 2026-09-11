@@ -1,0 +1,39 @@
+{{define "title"}}{{.Content.M.Name}} · {{.Brand.Name}}{{end}}
+{{define "body"}}
+{{template "header" .}}
+<main class="container page">
+{{with .Content}}
+  <p class="crumbs small"><a href="/">Dashboard</a></p>
+  <div class="page-head mon-head">
+    <div class="mon-title">
+      <span class="status status-{{.State}}"><span class="dot dot-{{.State}}"></span>{{.StateLabel}}<span class="sr-only"> status</span></span>
+      <h1 class="t-40">{{.M.Name}}</h1>
+      <p class="muted">{{.TypeLabel}}{{if ne .M.Type "push"}} · {{.Target}}{{end}} · every {{.Interval}}</p>
+      <p class="muted small">{{.LastLine}}</p>
+    </div>
+    <div class="row mon-actions">
+      <a class="btn btn-secondary" href="/monitors/{{.M.ID}}/edit">Edit</a>
+      {{if .M.Paused}}
+      <form method="post" action="/monitors/{{.M.ID}}/resume" class="inline"><button type="submit" class="btn btn-secondary">Resume</button></form>
+      {{else}}
+      <form method="post" action="/monitors/{{.M.ID}}/pause" class="inline"><button type="submit" class="btn btn-secondary">Pause</button></form>
+      {{end}}
+      <form method="post" action="/monitors/{{.M.ID}}/delete" class="inline" data-confirm="Delete {{.M.Name}}? This also deletes its history."><button type="submit" class="btn btn-danger">Delete</button></form>
+    </div>
+  </div>
+  {{if .PushURL}}
+  <div class="card">
+    <div class="card-title">Push URL</div>
+    <p class="muted">Call this URL from your job on every run. Keep it secret.</p>
+    <div class="copy-row mt-6">
+      <code class="push-url">{{.PushURL}}</code>
+      <button type="button" class="btn btn-secondary btn-sm" data-copy="{{.PushURL}}">Copy</button>
+    </div>
+    <p class="muted small mt-12">Example for a cron job:</p>
+    <pre class="code-block"><code>curl -fsS {{.PushURL}}</code></pre>
+  </div>
+  {{end}}
+{{end}}
+</main>
+{{template "footer" .}}
+{{end}}

@@ -1,0 +1,106 @@
+{{define "title"}}{{if .Content.ID}}Edit {{.Content.Name}}{{else}}Add monitor{{end}} · {{.Brand.Name}}{{end}}
+{{define "body"}}
+{{template "header" .}}
+<main class="container page page-narrow">
+{{with .Content}}
+  <p class="crumbs small"><a href="{{if .ID}}/monitors/{{.ID}}{{else}}/{{end}}">{{if .ID}}{{.Name}}{{else}}Dashboard{{end}}</a></p>
+  <div class="page-head">
+    <div>
+      <h1 class="t-28">{{if .ID}}Edit monitor{{else}}Add monitor{{end}}</h1>
+      <p class="muted">{{if .ID}}The type cannot change. Delete the monitor and add a new one to change it.{{else}}Choose a type, enter the target, and save. The first check runs at once.{{end}}</p>
+    </div>
+  </div>
+  {{with index .Errors "type"}}<p class="alert alert-error" role="alert">{{.}}</p>{{end}}
+  <form method="post" action="{{if .ID}}/monitors/{{.ID}}/edit{{else}}/monitors/new{{end}}" class="mon-form stack" id="monitor-form" data-type="{{.Type}}" novalidate>
+    {{if .ID}}
+    <input type="hidden" name="type" value="{{.Type}}">
+    {{else}}
+    <fieldset class="type-cards">
+      <legend class="sr-only">Type</legend>
+      <label class="type-card"><input type="radio" name="type" value="http"{{if eq .Type "http"}} checked{{end}}><span class="type-card-body">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+        <span class="type-name">HTTP(S)</span><span class="muted small">A web page or API</span></span></label>
+      <label class="type-card"><input type="radio" name="type" value="tcp"{{if eq .Type "tcp"}} checked{{end}}><span class="type-card-body">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 10h14v5a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3z"/><path d="M9 10V5M15 10V5M12 18v3"/></svg>
+        <span class="type-name">TCP port</span><span class="muted small">A port accepts connections</span></span></label>
+      <label class="type-card"><input type="radio" name="type" value="ping"{{if eq .Type "ping"}} checked{{end}}><span class="type-card-body">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="2"/><path d="M7.8 16.2a6 6 0 0 1 0-8.4M16.2 7.8a6 6 0 0 1 0 8.4M5 19a10 10 0 0 1 0-14M19 5a10 10 0 0 1 0 14"/></svg>
+        <span class="type-name">Ping</span><span class="muted small">A host answers ICMP</span></span></label>
+      <label class="type-card"><input type="radio" name="type" value="dns"{{if eq .Type "dns"}} checked{{end}}><span class="type-card-body">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/><circle cx="18" cy="18" r="2.5"/></svg>
+        <span class="type-name">DNS</span><span class="muted small">A name resolves</span></span></label>
+      <label class="type-card"><input type="radio" name="type" value="push"{{if eq .Type "push"}} checked{{end}}><span class="type-card-body">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4M8 8l4-4 4 4"/><path d="M4 14v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg>
+        <span class="type-name">Push</span><span class="muted small">A job calls in</span></span></label>
+    </fieldset>
+    {{end}}
+
+    <div class="card stack">
+      <div class="for-http">
+        <label class="field{{if index .Errors "url"}} invalid{{end}}">
+          <span>URL</span>
+          <input type="url" name="url" value="{{.URL}}" placeholder="https://example.com" autocomplete="off" spellcheck="false" data-target>
+          {{with index .Errors "url"}}<span class="error">{{.}}</span>{{else}}<span class="hint">The check passes on a 2xx response. An invalid certificate fails.</span>{{end}}
+        </label>
+      </div>
+      <div class="for-tcp for-ping">
+        <label class="field{{if index .Errors "host"}} invalid{{end}}">
+          <span>Host</span>
+          <input type="text" name="host" value="{{.Host}}" placeholder="db.example.com" autocomplete="off" spellcheck="false" data-target>
+          {{with index .Errors "host"}}<span class="error">{{.}}</span>{{end}}
+        </label>
+      </div>
+      <div class="for-tcp">
+        <label class="field field-short{{if index .Errors "port"}} invalid{{end}}">
+          <span>Port</span>
+          <input type="number" name="port" value="{{.Port}}" placeholder="5432" min="1" max="65535" inputmode="numeric">
+          {{with index .Errors "port"}}<span class="error">{{.}}</span>{{end}}
+        </label>
+      </div>
+      <div class="for-dns">
+        <label class="field{{if index .Errors "hostname"}} invalid{{end}}">
+          <span>Hostname</span>
+          <input type="text" name="hostname" value="{{.Hostname}}" placeholder="example.com" autocomplete="off" spellcheck="false" data-target>
+          {{with index .Errors "hostname"}}<span class="error">{{.}}</span>{{end}}
+        </label>
+      </div>
+      <div class="for-http">
+        <label class="field">
+          <span>Keyword <span class="muted">(optional)</span></span>
+          <input type="text" name="keyword" value="{{.Keyword}}" autocomplete="off">
+          <span class="hint">The check fails if the page does not contain this text. Case matters.</span>
+        </label>
+      </div>
+      <div class="for-dns">
+        <label class="field{{if index .Errors "expected_ip"}} invalid{{end}}">
+          <span>Expected IP <span class="muted">(optional)</span></span>
+          <input type="text" name="expected_ip" value="{{.ExpectedIP}}" placeholder="203.0.113.10" autocomplete="off" spellcheck="false">
+          {{with index .Errors "expected_ip"}}<span class="error">{{.}}</span>{{else}}<span class="hint">The check fails if no record matches this address.</span>{{end}}
+        </label>
+      </div>
+      <p class="for-push muted">{{$.Brand.Name}} creates a secret URL for this monitor when you save. Your job calls that URL on every run. The monitor goes down when two intervals pass without a call.</p>
+
+      <label class="field{{if index .Errors "name"}} invalid{{end}}">
+        <span>Name</span>
+        <input type="text" name="name" value="{{.Name}}" placeholder="{{if eq .Type "push"}}Nightly backup{{else}}Filled from the target{{end}}" autocomplete="off" maxlength="80">
+        {{with index .Errors "name"}}<span class="error">{{.}}</span>{{end}}
+      </label>
+      <label class="field field-short{{if index .Errors "interval"}} invalid{{end}}">
+        <span>Check every</span>
+        <select name="interval">
+          {{$sel := .Interval}}{{range .Intervals}}<option value="{{.Seconds}}"{{if eq .Seconds $sel}} selected{{end}}>{{.Label}}</option>{{end}}
+        </select>
+        {{with index .Errors "interval"}}<span class="error">{{.}}</span>{{end}}
+      </label>
+      <label class="check"><input type="checkbox" name="public" value="1"{{if .Public}} checked{{end}}> Show on the public status page</label>
+    </div>
+
+    <div class="row">
+      <button type="submit" class="btn btn-primary">{{if .ID}}Save changes{{else}}Add monitor{{end}}</button>
+      <a class="btn btn-secondary" href="{{if .ID}}/monitors/{{.ID}}{{else}}/{{end}}">Cancel</a>
+    </div>
+  </form>
+{{end}}
+</main>
+{{template "footer" .}}
+{{end}}

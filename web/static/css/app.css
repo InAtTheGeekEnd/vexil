@@ -504,6 +504,176 @@ body.auth { align-items: center; justify-content: center; padding: 24px 16px; }
   }
 }
 
+/* --- Dashboard --- */
+
+.dash-head h1 { display: flex; align-items: center; gap: 12px; }
+.dash-head h1 .dot { width: 12px; height: 12px; }
+.crumbs { margin-bottom: 12px; }
+.crumbs a { color: var(--muted); }
+.crumbs a:hover { color: var(--text); }
+
+.monitors {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+/* No overflow clipping on the list: the uptime tooltips of the first row
+   rise above it. The rows round their own corners instead. */
+.mon-row:first-child { border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0; }
+.mon-row:last-child { border-radius: 0 0 calc(var(--radius) - 1px) calc(var(--radius) - 1px); }
+.mon-row:only-child { border-radius: calc(var(--radius) - 1px); }
+.mon-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 28px 8px minmax(0, 1fr) minmax(140px, 240px) 64px 80px 120px;
+  grid-template-areas: "grip dot name bar pct spark checked";
+  align-items: center;
+  gap: 16px;
+  padding: 14px 20px 14px 0;
+  border-top: 1px solid var(--border);
+  transition: background-color var(--ease), opacity var(--ease);
+}
+.mon-row:first-child { border-top: 0; }
+.mon-row:hover { background: color-mix(in srgb, var(--text) 3%, transparent); }
+.mon-row.mon-down { background: color-mix(in srgb, var(--down) 5%, transparent); }
+.mon-row.mon-down:hover { background: color-mix(in srgb, var(--down) 9%, transparent); }
+.mon-row.dragging { opacity: 0.4; }
+.monitors.dragging, .monitors.dragging * { cursor: grabbing; user-select: none; }
+
+/* The name is the link. Its ::after covers the whole row, so a click
+   anywhere opens the monitor. The grip and the uptime bar sit above it. */
+.mon-link { color: inherit; }
+.mon-link::after { content: ""; position: absolute; inset: 0; }
+.mon-link:focus-visible { outline: none; }
+.mon-link:focus-visible::after { outline: 2px solid var(--accent); outline-offset: -2px; }
+.mon-handle, .mon-uptime { position: relative; z-index: 1; }
+
+.mon-handle {
+  grid-area: grip;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: grab;
+  opacity: 0.45;
+  transition: opacity var(--ease);
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.mon-handle:hover, .mon-row:hover .mon-handle, .mon-handle:focus-visible { opacity: 1; }
+.mon-handle:active { cursor: grabbing; }
+.mon-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 4px; }
+.mon-handle svg { width: 12px; height: 16px; }
+.mon-row > .dot { grid-area: dot; }
+.mon-name { grid-area: name; display: flex; flex-direction: column; min-width: 0; }
+.mon-name > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mon-uptime { grid-area: bar; }
+.mon-pct { grid-area: pct; font-weight: 600; text-align: right; white-space: nowrap; }
+.mon-pct small { font-size: 12px; font-weight: 400; color: var(--muted); margin-left: 1px; }
+.mon-spark { grid-area: spark; display: flex; justify-content: flex-end; }
+.mon-checked { grid-area: checked; text-align: right; white-space: nowrap; }
+
+@media (max-width: 900px) {
+  .mon-row { grid-template-columns: 28px 8px minmax(0, 1fr) minmax(120px, 200px) 64px 110px; grid-template-areas: "grip dot name bar pct checked"; }
+  .mon-spark { display: none; }
+}
+@media (max-width: 640px) {
+  .mon-row {
+    grid-template-columns: 28px 8px minmax(0, 1fr) auto;
+    grid-template-areas: "grip dot name pct" "grip bar bar bar";
+    row-gap: 10px;
+    padding-right: 16px;
+  }
+  .mon-checked { display: none; }
+  .mon-uptime { height: 20px; }
+}
+
+/* --- Monitor detail --- */
+
+.mon-head { align-items: flex-start; }
+.mon-title { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.mon-title h1 { overflow-wrap: anywhere; }
+.mon-actions { flex-wrap: wrap; }
+.copy-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.push-url { overflow-wrap: anywhere; padding: 6px 10px; }
+.code-block {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-x: auto;
+}
+.code-block code { padding: 0; background: transparent; font-size: inherit; }
+.mt-12 { margin-top: 12px; }
+@media (max-width: 640px) {
+  .mon-title h1 { font-size: 28px; }
+}
+
+/* --- Monitor form --- */
+
+.page-narrow { max-width: 760px; }
+.type-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(124px, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.type-card { position: relative; display: block; cursor: pointer; }
+.type-card input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  pointer-events: none;
+}
+.type-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  height: 100%;
+  padding: 14px;
+  box-sizing: border-box;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  transition: border-color var(--ease), box-shadow var(--ease), background-color var(--ease);
+}
+.type-card-body svg { width: 22px; height: 22px; color: var(--muted); margin-bottom: 6px; transition: color var(--ease); }
+.type-card-body .type-name { font-weight: 600; }
+.type-card:hover .type-card-body { border-color: var(--muted); }
+.type-card input:checked + .type-card-body {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+  background: color-mix(in srgb, var(--accent) 4%, var(--surface));
+}
+.type-card input:checked + .type-card-body svg { color: var(--accent); }
+.type-card input:focus-visible + .type-card-body { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Only the fields of the chosen type are visible. */
+.mon-form .for-http, .mon-form .for-tcp, .mon-form .for-ping, .mon-form .for-dns, .mon-form .for-push { display: none; }
+.mon-form[data-type="http"] .for-http,
+.mon-form[data-type="tcp"] .for-tcp,
+.mon-form[data-type="ping"] .for-ping,
+.mon-form[data-type="dns"] .for-dns,
+.mon-form[data-type="push"] .for-push { display: block; }
+.field-short { max-width: 220px; }
+.field > span .muted { font-weight: 400; }
+
 /* --- Style guide --- */
 
 .sg-section { margin-bottom: 40px; }

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/InAtTheGeekEnd/vexil/internal/brand"
@@ -27,6 +28,9 @@ type Options struct {
 	// Engine is the running check engine. Nil means no engine, which makes
 	// /readyz fail and /push return 404.
 	Engine *engine.Engine
+	// BaseURL is the public URL of the server without a trailing slash. It
+	// builds push URLs. Empty means use the host of the request.
+	BaseURL string
 }
 
 // Server holds the handlers and their dependencies.
@@ -36,6 +40,7 @@ type Server struct {
 	log        *slog.Logger
 	tmpl       map[string]*template.Template
 	engine     *engine.Engine
+	baseURL    string
 	loginLimit *rateLimiter
 	handler    http.Handler
 }
@@ -53,6 +58,7 @@ func New(st *store.Store, opts Options) (*Server, error) {
 		log:        opts.Log,
 		tmpl:       tmpl,
 		engine:     opts.Engine,
+		baseURL:    strings.TrimRight(opts.BaseURL, "/"),
 		loginLimit: newRateLimiter(5, time.Minute),
 	}
 	if s.brand.Name == "" {
@@ -92,6 +98,20 @@ func (s *Server) routes() http.Handler {
 
 	mux.Handle("GET /{$}", s.requireAdmin(http.HandlerFunc(s.handleDashboard)))
 	mux.Handle("GET /styleguide", s.requireAdmin(http.HandlerFunc(s.handleStyleguide)))
+	admin := map[string]http.HandlerFunc{
+		"GET /monitors/new":          s.handleMonitorNewForm,
+		"POST /monitors/new":         s.handleMonitorCreate,
+		"POST /monitors/reorder":     s.handleReorder,
+		"GET /monitors/{id}":         s.handleMonitor,
+		"GET /monitors/{id}/edit":    s.handleMonitorEditForm,
+		"POST /monitors/{id}/edit":   s.handleMonitorUpdate,
+		"POST /monitors/{id}/pause":  s.handleMonitorPause,
+		"POST /monitors/{id}/resume": s.handleMonitorResume,
+		"POST /monitors/{id}/delete": s.handleMonitorDelete,
+	}
+	for pattern, h := range admin {
+		mux.Handle(pattern, s.requireAdmin(h))
+	}
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, http.StatusNotFound)
@@ -303,12 +323,6 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
-}
-
-// --- Dashboard ---
-
-func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	s.render(w, http.StatusOK, "dashboard.html", pageData{})
 }
 
 // --- Helpers ---
