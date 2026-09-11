@@ -649,10 +649,12 @@ func TestPushGraceTiming(t *testing.T) {
 	if err := env.engine.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
+	// The engine stamps the push time inside Push, so take the reference
+	// time before the call. Otherwise the miss can land a few ms early.
+	pushed := time.Now()
 	if err := env.engine.Push(ctx, m.PushToken); err != nil {
 		t.Fatal(err)
 	}
-	pushed := time.Now()
 	waitFor(t, events, 2*time.Second, func(ev Event) bool { return ev.State == Up })
 	grace := env.engine.pushGrace(50 * testScale) // 1s + 600ms
 	fail := waitFor(t, events, 3*time.Second, func(ev Event) bool { return !ev.Result.OK })
