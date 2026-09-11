@@ -1,6 +1,8 @@
 # Runtime data (SQLite file and uploads)
 /data/
 
-# Built binary
+# Built binaries and GoReleaser output
 /vexil
 /vexil.exe
+/vexil-*
+/dist/
