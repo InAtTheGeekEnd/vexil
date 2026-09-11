@@ -117,3 +117,34 @@ func (s *Store) LatencySeries(ctx context.Context, monitorID int64, since time.T
 	}
 	return out, rows.Err()
 }
+
+// Summary counts the checks of a monitor since a time. AvgLatencyMS is the
+// average latency of the successful checks, or 0 when there is none.
+type Summary struct {
+	Total        int
+	OK           int
+	AvgLatencyMS int64
+}
+
+// Percent returns the uptime as 0 to 100 and false when there are no checks.
+func (s Summary) Percent() (float64, bool) {
+	if s.Total == 0 {
+		return 0, false
+	}
+	return float64(s.OK) * 100 / float64(s.Total), true
+}
+
+// Summary reads the check counts and the average latency since a time from
+// the raw checks table.
+func (s *Store) Summary(ctx context.Context, monitorID int64, since time.Time) (Summary, error) {
+	var out Summary
+	var avg sql.NullFloat64
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*), COALESCE(SUM(ok), 0), AVG(CASE WHEN ok = 1 THEN latency_ms END)
+		FROM checks WHERE monitor_id = ? AND at >= ?`, monitorID, since.Unix()).Scan(&out.Total, &out.OK, &avg)
+	if err != nil {
+		return out, err
+	}
+	out.AvgLatencyMS = int64(avg.Float64 + 0.5)
+	return out, nil
+}

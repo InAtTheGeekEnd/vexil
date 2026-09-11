@@ -93,3 +93,43 @@ func TestDailyStatsAndLatencySeries(t *testing.T) {
 		t.Fatalf("series = %+v, want one point of 200 ms", series)
 	}
 }
+
+func TestSummary(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	m := &Monitor{Name: "m", Type: TypeHTTP, Target: "https://x"}
+	if err := s.CreateMonitor(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	empty, err := s.Summary(ctx, m.ID, now.Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := empty.Percent(); ok || empty.Total != 0 {
+		t.Fatalf("empty summary = %+v", empty)
+	}
+	checks := []Check{
+		{At: now.Add(-3 * time.Hour), OK: true, LatencyMS: 100}, // outside the window
+		{At: now.Add(-30 * time.Minute), OK: true, LatencyMS: 100},
+		{At: now.Add(-20 * time.Minute), OK: true, LatencyMS: 300},
+		{At: now.Add(-10 * time.Minute), OK: false, Error: "HTTP 503"},
+		{At: now.Add(-5 * time.Minute), OK: true, LatencyMS: 200},
+	}
+	for _, c := range checks {
+		c.MonitorID = m.ID
+		if err := s.InsertCheck(ctx, c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := s.Summary(ctx, m.ID, now.Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Total != 4 || got.OK != 3 || got.AvgLatencyMS != 200 {
+		t.Fatalf("summary = %+v, want total 4, ok 3, avg 200", got)
+	}
+	if pct, ok := got.Percent(); !ok || pct != 75 {
+		t.Fatalf("percent = %v, %v", pct, ok)
+	}
+}
