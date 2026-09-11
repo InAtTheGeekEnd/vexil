@@ -1,0 +1,6 @@
+# Runtime data (SQLite file and uploads)
+/data/
+
+# Built binary
+/vexil
+/vexil.exe
