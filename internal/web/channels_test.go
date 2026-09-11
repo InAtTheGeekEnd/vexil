@@ -32,20 +32,24 @@ func TestChannelLifecycle(t *testing.T) {
 
 	// The form shows the type cards and the ntfy fields.
 	b := body(t, get(t, c, ts.URL+"/notifications/new"))
-	for _, want := range []string{"type-cards", `name="url"`, `name="token"`, `name="host"`, "Bot token"} {
+	for _, want := range []string{"type-cards", `name="ntfy_url"`, `name="ntfy_token"`, `name="email_host"`, "Bot token"} {
 		if !strings.Contains(b, want) {
 			t.Errorf("channel form lacks %q", want)
 		}
 	}
 
 	// Validation.
-	res := postForm(t, c, ts.URL+"/notifications/new", url.Values{"type": {"ntfy"}, "url": {"ntfy.sh/x"}})
+	res := postForm(t, c, ts.URL+"/notifications/new", url.Values{"type": {"ntfy"}, "ntfy_url": {"ntfy.sh/x"}})
 	if res.StatusCode != http.StatusBadRequest || !strings.Contains(body(t, res), "Enter a full URL") {
 		t.Fatalf("bad form = %d", res.StatusCode)
 	}
 
-	// Create. The name comes from the type.
-	res = postForm(t, c, ts.URL+"/notifications/new", url.Values{"type": {"ntfy"}, "url": {target.URL + "/alerts"}, "token": {"tk_secret"}})
+	// Create. The browser posts the inputs of every type; only the chosen
+	// type's inputs count. The name comes from the type.
+	res = postForm(t, c, ts.URL+"/notifications/new", url.Values{
+		"type": {"ntfy"}, "slack_url": {""}, "discord_url": {""}, "webhook_url": {""}, "telegram_token": {""},
+		"ntfy_url": {target.URL + "/alerts"}, "ntfy_token": {"tk_secret"},
+	})
 	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/notifications" {
 		t.Fatalf("create = %d -> %q", res.StatusCode, res.Header.Get("Location"))
 	}
@@ -66,7 +70,7 @@ func TestChannelLifecycle(t *testing.T) {
 	if strings.Contains(b, "tk_secret") || !strings.Contains(b, "data-replace") || strings.Contains(b, "type-cards") {
 		t.Fatal("edit form leaks the token, lacks Replace or shows the type cards")
 	}
-	res = postForm(t, c, ts.URL+"/notifications/"+id+"/edit", url.Values{"url": {target.URL + "/alerts2"}, "token": {""}, "name": {"Phone"}})
+	res = postForm(t, c, ts.URL+"/notifications/"+id+"/edit", url.Values{"ntfy_url": {target.URL + "/alerts2"}, "ntfy_token": {""}, "name": {"Phone"}})
 	if res.StatusCode != http.StatusSeeOther {
 		t.Fatalf("edit = %d", res.StatusCode)
 	}

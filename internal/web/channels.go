@@ -168,15 +168,17 @@ func formFromChannel(c store.Channel) channelForm {
 	return f
 }
 
-// parseChannelForm reads the posted fields for the given type. old holds
-// the saved config on edit: an empty secret keeps the old value.
+// parseChannelForm reads the posted fields for the given type. The inputs
+// are named "{type}_{key}": every type has its own inputs in one form, so
+// plain keys like "url" would collide. old holds the saved config on edit:
+// an empty secret keeps the old value.
 func parseChannelForm(r *http.Request, typ string, old map[string]string) (channelForm, store.Channel) {
 	f := newChannelForm()
 	f.Type = typ
 	f.Name = strings.TrimSpace(r.FormValue("name"))
 	c := store.Channel{Type: typ, Config: map[string]string{}}
 	for _, fd := range notify.Fields(typ) {
-		v := strings.TrimSpace(r.FormValue(fd.Key))
+		v := strings.TrimSpace(r.FormValue(typ + "_" + fd.Key))
 		if fd.Secret {
 			if v == "" {
 				v = old[fd.Key]

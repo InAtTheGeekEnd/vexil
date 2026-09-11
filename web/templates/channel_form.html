@@ -34,9 +34,9 @@
           <span>{{.Label}}{{if not .Required}} <span class="muted">(optional)</span>{{end}}</span>
           {{if and .Secret (index $f.HasKeys .Key)}}
           <span class="secret"><span class="input secret-mask" aria-hidden="true">••••••••••••</span><button type="button" class="btn btn-secondary btn-sm" data-replace>Replace</button></span>
-          <input type="{{.Type}}" name="{{.Key}}" value="" autocomplete="off" spellcheck="false" hidden>
+          <input type="{{.Type}}" name="{{$t}}_{{.Key}}" value="" autocomplete="off" spellcheck="false" hidden>
           {{else}}
-          <input type="{{.Type}}" name="{{.Key}}" value="{{index $f.Values .Key}}" placeholder="{{.Placeholder}}" autocomplete="off" spellcheck="false"{{if eq .Key "port"}} min="1" max="65535" inputmode="numeric"{{end}}>
+          <input type="{{.Type}}" name="{{$t}}_{{.Key}}" value="{{index $f.Values .Key}}" placeholder="{{.Placeholder}}" autocomplete="off" spellcheck="false"{{if eq .Key "port"}} min="1" max="65535" inputmode="numeric"{{end}}>
           {{end}}
           {{with index $f.Errors .Key}}<span class="error">{{.}}</span>{{else}}{{with .Hint}}<span class="hint">{{.}}</span>{{end}}{{end}}
         </label>
