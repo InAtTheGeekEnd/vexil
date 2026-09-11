@@ -1,0 +1,11 @@
+{{define "title"}}Dashboard · {{.Brand.Name}}{{end}}
+{{define "body"}}
+{{template "header" .}}
+<main class="container page">
+  <section class="empty">
+    <p class="lead">No monitors yet.</p>
+    <a class="btn btn-primary" href="/monitors/new">Add your first monitor</a>
+  </section>
+</main>
+{{template "footer" .}}
+{{end}}

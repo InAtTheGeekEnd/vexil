@@ -1,0 +1,21 @@
+{{define "title"}}Set up · {{.Brand.Name}}{{end}}
+{{define "bodyclass"}}auth{{end}}
+{{define "body"}}
+<main class="auth-card">
+  <h1 class="auth-brand">{{.Brand.Name}}</h1>
+  <p class="lead">Welcome. Choose a password for the admin account.</p>
+  {{if .Error}}<p class="alert alert-error" role="alert">{{.Error}}</p>{{end}}
+  <form method="post" action="/setup" class="stack">
+    <label class="field">
+      <span>Password</span>
+      <input type="password" name="password" required minlength="10" autocomplete="new-password" autofocus>
+      <small class="muted">At least 10 characters.</small>
+    </label>
+    <label class="field">
+      <span>Repeat password</span>
+      <input type="password" name="confirm" required minlength="10" autocomplete="new-password">
+    </label>
+    <button type="submit" class="btn btn-primary btn-block">Create password</button>
+  </form>
+</main>
+{{end}}

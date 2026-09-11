@@ -1,0 +1,10 @@
+{{define "title"}}{{.Title}} · {{.Brand.Name}}{{end}}
+{{define "bodyclass"}}auth{{end}}
+{{define "body"}}
+<main class="auth-card">
+  <h1 class="auth-brand">{{.Brand.Name}}</h1>
+  <p class="lead">{{.Title}}</p>
+  <p class="muted">{{.Message}}</p>
+  <a class="btn btn-secondary" href="/">Go to the dashboard</a>
+</main>
+{{end}}

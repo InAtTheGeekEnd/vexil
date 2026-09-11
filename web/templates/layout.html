@@ -1,0 +1,28 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>{{block "title" .}}{{.Brand.Name}}{{end}}</title>
+<link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body class="{{block "bodyclass" .}}{{end}}">
+{{block "body" .}}{{end}}
+</body>
+</html>{{end}}
+
+{{define "header"}}<header class="topbar">
+  <div class="container topbar-inner">
+    <a class="brand" href="/">{{.Brand.Name}}</a>
+    <form method="post" action="/logout" class="inline">
+      <button type="submit" class="btn btn-ghost">Log out</button>
+    </form>
+  </div>
+</header>{{end}}
+
+{{define "footer"}}<footer class="footer">
+  <div class="container">
+    {{if .Brand.PoweredBy}}<span class="muted">Powered by {{.Brand.Name}}</span>{{end}}
+  </div>
+</footer>{{end}}

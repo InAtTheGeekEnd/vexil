@@ -1,0 +1,16 @@
+{{define "title"}}Log in · {{.Brand.Name}}{{end}}
+{{define "bodyclass"}}auth{{end}}
+{{define "body"}}
+<main class="auth-card">
+  <h1 class="auth-brand">{{.Brand.Name}}</h1>
+  {{if .Error}}<p class="alert alert-error" role="alert">{{.Error}}</p>{{end}}
+  <form method="post" action="/login" class="stack">
+    <label class="field">
+      <span>Password</span>
+      <input type="password" name="password" required autocomplete="current-password" autofocus>
+    </label>
+    <button type="submit" class="btn btn-primary btn-block">Log in</button>
+  </form>
+  <p class="muted small help">Forgot your password? Run <code>{{.Brand.Name}} reset-password</code> on the server.</p>
+</main>
+{{end}}
