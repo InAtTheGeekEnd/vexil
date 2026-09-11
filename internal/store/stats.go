@@ -23,8 +23,9 @@ func (d DayStat) Percent() float64 {
 }
 
 // DailyStats returns one DayStat per UTC day from since to now, oldest
-// first. It merges the daily table with the raw checks, so it works before
-// and after the retention job has run. Days without checks have Total 0.
+// first. A day comes from the daily table when the retention job has
+// written it, and from the raw checks otherwise. Days without checks have
+// Total 0.
 func (s *Store) DailyStats(ctx context.Context, monitorID int64, since, now time.Time) ([]DayStat, error) {
 	since, now = since.UTC(), now.UTC()
 	first := time.Date(since.Year(), since.Month(), since.Day(), 0, 0, 0, 0, time.UTC)
@@ -37,13 +38,9 @@ func (s *Store) DailyStats(ctx context.Context, monitorID int64, since, now time
 		byDay[out[i].Day] = &out[i]
 	}
 
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT day, total, ok FROM daily WHERE monitor_id = ? AND day >= ?
-		UNION ALL
-		SELECT strftime('%Y-%m-%d', at, 'unixepoch'), COUNT(*), SUM(ok)
-		FROM checks WHERE monitor_id = ? AND at >= ?
-		GROUP BY 1`,
-		monitorID, first.Format("2006-01-02"), monitorID, first.Unix())
+	rolled := map[string]bool{}
+	rows, err := s.db.QueryContext(ctx, `SELECT day, total, ok FROM daily WHERE monitor_id = ? AND day >= ?`,
+		monitorID, first.Format("2006-01-02"))
 	if err != nil {
 		return nil, err
 	}
@@ -54,12 +51,32 @@ func (s *Store) DailyStats(ctx context.Context, monitorID int64, since, now time
 		if err := rows.Scan(&day, &total, &ok); err != nil {
 			return nil, err
 		}
+		rolled[day] = true
 		if d := byDay[day]; d != nil {
-			d.Total += total
-			d.OK += ok
+			d.Total, d.OK = total, ok
 		}
 	}
 	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	raw, err := s.db.QueryContext(ctx, `
+		SELECT strftime('%Y-%m-%d', at, 'unixepoch'), COUNT(*), SUM(ok)
+		FROM checks WHERE monitor_id = ? AND at >= ? GROUP BY 1`, monitorID, first.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer raw.Close()
+	for raw.Next() {
+		var day string
+		var total, ok int
+		if err := raw.Scan(&day, &total, &ok); err != nil {
+			return nil, err
+		}
+		if d := byDay[day]; d != nil && !rolled[day] {
+			d.Total, d.OK = total, ok
+		}
+	}
+	if err := raw.Err(); err != nil {
 		return nil, err
 	}
 

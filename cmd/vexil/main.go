@@ -84,6 +84,14 @@ func serve(cfg config.Config, log *slog.Logger) error {
 	}
 	defer eng.Stop()
 
+	// The retention job stops before the engine and the store close.
+	jobCtx, stopJobs := context.WithCancel(ctx)
+	retentionDone := st.RunRetention(jobCtx, log)
+	defer func() {
+		stopJobs()
+		<-retentionDone
+	}()
+
 	srv, err := web.New(st, web.Options{Log: log, Engine: eng, BaseURL: cfg.BaseURL, Notifier: notifier})
 	if err != nil {
 		return err
