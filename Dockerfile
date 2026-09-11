@@ -7,9 +7,9 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-ARG TARGETOS TARGETARCH
+ARG TARGETOS TARGETARCH VERSION
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -trimpath -ldflags="-s -w" -o /out/vexil ./cmd/vexil \
+    go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o /out/vexil ./cmd/vexil \
     && mkdir -p /out/data
 
 # Final stage. Distroless static has CA certificates for HTTPS checks and

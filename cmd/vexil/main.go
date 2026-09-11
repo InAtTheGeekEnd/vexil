@@ -3,6 +3,7 @@
 //	vexil                 start the server
 //	vexil reset-password  set a new admin password and log out all sessions
 //	vexil healthcheck     ask /readyz and exit with 0 or 1, for Docker
+//	vexil version         print the version
 package main
 
 import (
@@ -16,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -28,6 +30,11 @@ import (
 	"github.com/InAtTheGeekEnd/vexil/internal/web"
 	"golang.org/x/term"
 )
+
+// version is set by GoReleaser with -ldflags "-X main.version=...". A plain
+// go build leaves it empty and versionString falls back to the module
+// version from the Go build info.
+var version string
 
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -43,6 +50,8 @@ func main() {
 		err = resetPassword(cfg)
 	case "healthcheck":
 		err = healthcheck(cfg)
+	case "version", "-v", "--version":
+		fmt.Println(versionString())
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -64,7 +73,19 @@ func arg(i int) string {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "Usage:\n  %[1]s                 start the server\n  %[1]s reset-password  set a new admin password\n  %[1]s healthcheck     exit 0 when /readyz answers ok\n\nEnvironment:\n  VEXIL_ADDR      listen address (default :8080)\n  VEXIL_DATA      data folder (default ./data)\n  VEXIL_BASE_URL  public URL used in notification links\n", brand.Default.Name)
+	fmt.Fprintf(os.Stderr, "Usage:\n  %[1]s                 start the server\n  %[1]s reset-password  set a new admin password\n  %[1]s healthcheck     exit 0 when /readyz answers ok\n  %[1]s version         print the version\n\nEnvironment:\n  VEXIL_ADDR      listen address (default :8080)\n  VEXIL_DATA      data folder (default ./data)\n  VEXIL_BASE_URL  public URL used in notification links\n", brand.Default.Name)
+}
+
+// versionString returns the release version, or the module version that
+// "go install" recorded, or "devel" for a local build.
+func versionString() string {
+	if version != "" {
+		return version
+	}
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	return "devel"
 }
 
 func serve(cfg config.Config, log *slog.Logger) error {

@@ -279,7 +279,7 @@ gofmt -l .                  # must print nothing
 
 The build works with `CGO_ENABLED=0`. See `SPEC.md` for the product specification.
 
-CI runs `gofmt`, `go vet`, `staticcheck`, `go test -race` and a Docker build on every push. A tag like `v1.2.3` builds the release binaries with GoReleaser and pushes the image to `ghcr.io/inatthegeekend/vexil`.
+CI runs `gofmt`, `go vet`, `staticcheck`, `go test -race` and a Docker build on every push. A tag like `v1.2.3` builds the release binaries with GoReleaser and pushes the image to `ghcr.io/inatthegeekend/vexil`. The binary reports its version with `vexil version`.
 
 ## License
 
