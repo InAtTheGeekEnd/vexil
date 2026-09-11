@@ -9,11 +9,21 @@ vexil is a simple, self-hosted uptime monitor. One binary, one data folder, no e
 
 ## Screenshots
 
+The dashboard in the light theme:
+
 ![Dashboard](docs/screenshots/dashboard.png)
+
+A monitor in the dark theme, with the response chart, uptime and incidents:
 
 ![Monitor detail](docs/screenshots/monitor.png)
 
+The public status page with a custom name and logo:
+
 ![Public status page](docs/screenshots/status.png)
+
+The dashboard on a phone:
+
+<img src="docs/screenshots/dashboard-mobile.png" width="300" alt="Dashboard on a phone">
 
 ## Quick start
 
