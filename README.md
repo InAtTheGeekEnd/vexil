@@ -39,6 +39,36 @@ In Docker add `--sysctl net.ipv4.ping_group_range="0 2147483647"` to `docker run
 
 Every open vexil tab keeps one live connection to the server for updates. Over plain HTTP a browser allows only 6 connections to one server, so several open tabs can block each other. Put vexil behind a reverse proxy with HTTPS. HTTP/2 lifts the limit.
 
+### Public status page and custom domain
+
+The status page is at `/status`. It shows the monitors that have **Show on status page** on. Every public monitor also has a badge at `/badge/{id}.svg`; the monitor page shows the URL.
+
+To serve the status page on its own domain, point the domain at vexil through a reverse proxy.
+
+Caddy:
+
+```
+status.example.com {
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+nginx:
+
+```
+server {
+    listen 443 ssl http2;
+    server_name status.example.com;
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
+```
+
+Set `VEXIL_BASE_URL=https://status.example.com` so links in alerts use the domain. Settings has the brand: the name, the logo, the accent color and the "Powered by" line.
+
 ### Backup
 
 Copy the data folder. It holds everything.
