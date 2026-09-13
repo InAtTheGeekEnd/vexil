@@ -7,7 +7,7 @@
   <div class="page-head mon-head">
     <div class="mon-title">
       <span class="status status-{{.State}}"><span class="dot dot-{{.State}}"></span>{{.StateLabel}}<span class="sr-only"> status</span></span>
-      <h1 class="t-40">{{.M.Name}}</h1>
+      <h1 class="t-40" title="{{.M.Name}}">{{.M.Name}}</h1>
       <p class="muted">{{.TypeLabel}}{{if ne .M.Type "push"}} · {{.Target}}{{end}} · every {{.Interval}}</p>
       {{if .Since}}<p class="mon-since">{{.Since}}</p>{{end}}
       <p class="muted small" id="last-line" data-monitor="{{.M.ID}}" data-kind="{{.Kind}}" data-head="{{.LastHead}}"{{if .LastAt}} data-at="{{.LastAt}}"{{end}}>{{.LastLine}}</p>

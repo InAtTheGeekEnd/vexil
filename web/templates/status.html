@@ -20,7 +20,7 @@
     <li class="status-row">
       <span class="status-head">
         <span class="dot dot-{{.State}}"><span class="sr-only">{{.StateLabel}}</span></span>
-        <span class="w-600">{{.Name}}</span>
+        <span class="w-600 status-name" title="{{.Name}}">{{.Name}}</span>
         <span class="status-pct muted small">{{if .UptimePct}}{{.UptimePct}}% over 90 days{{else}}No data yet{{end}}</span>
       </span>
       <span class="uptime uptime-90" role="img" aria-label="Uptime for the last 90 days: {{if .UptimePct}}{{.UptimePct}}%{{else}}no data yet{{end}}">{{range .Uptime}}<span class="seg {{.Class}}" data-tip="{{.Tip}}"></span>{{end}}</span>
@@ -41,7 +41,7 @@
       <thead><tr><th>Monitor</th><th>Start</th><th>Duration</th><th>Reason</th></tr></thead>
       <tbody>
       {{range .Incidents}}
-        <tr{{if .Open}} class="incident-open"{{end}}><td class="nowrap">{{.Monitor}}</td><td class="nowrap">{{.Start}}</td><td class="nowrap">{{.Duration}}</td><td>{{.Reason}}</td></tr>
+        <tr{{if .Open}} class="incident-open"{{end}}><td class="nowrap td-name" title="{{.Monitor}}">{{.Monitor}}</td><td class="nowrap">{{.Start}}</td><td class="nowrap">{{.Duration}}</td><td>{{.Reason}}</td></tr>
       {{end}}
       </tbody>
     </table>

@@ -18,7 +18,7 @@
     <li class="chan-row{{if not .Enabled}} chan-off{{end}}">
       <span class="chan-type">{{template "chan-icon" .Type}}</span>
       <span class="chan-name">
-        <span class="w-600">{{.Name}}</span>
+        <span class="w-600" title="{{.Name}}">{{.Name}}</span>
         <span class="muted small">{{.TypeLabel}} · {{.Summary}}</span>
         {{if .LastError}}<span class="chan-error small">{{.LastError}}</span>{{end}}
       </span>
