@@ -383,3 +383,62 @@ func TestFaviconRoutes(t *testing.T) {
 		b = next
 	}
 }
+
+// TestLogoRemoveRestoresIcons uploads a logo, removes it with the Remove
+// button and checks that the tab icons for both states and the touch icon
+// are the built-in ones again, in the brand state and in the dashboard.
+func TestLogoRemoveRestoresIcons(t *testing.T) {
+	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10"/></svg>`)
+	tests := []struct {
+		name string
+		logo []byte
+		// touch reports whether the logo changes the touch icon. The server
+		// cannot draw an SVG, so an SVG logo keeps the built-in one.
+		touch bool
+	}{
+		{"png logo", pngLogo(t), true},
+		{"svg logo", svg, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, st := newIdleServer(t, Options{})
+			ts, c := loggedIn(t, s, st)
+			icons := func() [3]string {
+				b := s.currentBrand()
+				return [3]string{b.FaviconUpURL, b.FaviconDownURL, b.TouchIconURL}
+			}
+			builtin := icons()
+
+			res := postMultipart(t, c, ts.URL+"/settings", map[string]string{"name": "Acme", "accent": "#4F46E5"}, tt.logo)
+			if res.StatusCode != http.StatusOK {
+				t.Fatalf("upload = %d", res.StatusCode)
+			}
+			uploaded := icons()
+			if uploaded[0] == builtin[0] || uploaded[1] == builtin[1] {
+				t.Fatalf("upload kept the built-in favicon urls: %v", uploaded)
+			}
+			if changed := uploaded[2] != builtin[2]; changed != tt.touch {
+				t.Fatalf("touch icon changed = %v, want %v", changed, tt.touch)
+			}
+
+			res = postForm(t, c, ts.URL+"/settings/logo/delete", url.Values{})
+			if res.StatusCode != http.StatusOK {
+				t.Fatalf("remove = %d", res.StatusCode)
+			}
+			body(t, res)
+			if got := icons(); got != builtin {
+				t.Fatalf("icons after remove = %v, want the built-in %v", got, builtin)
+			}
+			page := body(t, get(t, c, ts.URL+"/"))
+			for _, want := range []string{
+				`<link rel="icon" href="` + builtin[0] + `#`,
+				`data-up="` + builtin[0] + `" data-down="` + builtin[1] + `"`,
+				`<link rel="apple-touch-icon" sizes="180x180" href="` + builtin[2] + `">`,
+			} {
+				if !strings.Contains(page, want) {
+					t.Errorf("dashboard after remove lacks %q", want)
+				}
+			}
+		})
+	}
+}
