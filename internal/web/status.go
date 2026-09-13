@@ -130,11 +130,19 @@ func (s *Server) handleBadge(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(badgeSVG(m.Name, state, badgeColors[state])))
 }
 
+// badgeLabelLen caps the drawn label so a long name gives a badge that
+// still fits a README column. The full name stays in the title.
+const badgeLabelLen = 36
+
 // badgeSVG draws a flat two-part badge: the label on dark grey, the value
 // on the status color. Text widths are fixed with textLength so every
 // viewer renders the same shape.
 func badgeSVG(label, value, color string) string {
 	const charW, pad, h = 6.5, 6.0, 20.0
+	full := label
+	if r := []rune(label); len(r) > badgeLabelLen {
+		label = string(r[:badgeLabelLen-1]) + "…"
+	}
 	lw := float64(len([]rune(label)))*charW + 2*pad
 	vw := float64(len([]rune(value)))*charW + 2*pad
 	w := lw + vw
@@ -146,8 +154,8 @@ func badgeSVG(label, value, color string) string {
 		`<g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" font-size="11">`+
 		`<text x="%s" y="14" textLength="%s">%s</text>`+
 		`<text x="%s" y="14" textLength="%s">%s</text></g></svg>`,
-		ftoa(w), ftoa(h), esc(label), esc(value),
-		esc(label), esc(value),
+		ftoa(w), ftoa(h), esc(full), esc(value),
+		esc(full), esc(value),
 		ftoa(w), ftoa(h),
 		ftoa(lw), ftoa(h), ftoa(lw), ftoa(vw), ftoa(h), color,
 		ftoa(lw/2), ftoa(lw-2*pad), esc(label),

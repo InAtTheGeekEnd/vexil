@@ -108,4 +108,9 @@ func TestBadgeSVG(t *testing.T) {
 			t.Errorf("badge lacks %s", want)
 		}
 	}
+	long := strings.Repeat("n", 60)
+	svg = badgeSVG(long, "up", "#16A34A")
+	if !strings.Contains(svg, `aria-label="`+long+`: up"`) || strings.Contains(svg, ">"+long+"<") || !strings.Contains(svg, "…<") {
+		t.Errorf("long badge label is not shortened: %s", svg)
+	}
 }
