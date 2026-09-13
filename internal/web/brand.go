@@ -25,8 +25,7 @@ type brandState struct {
 	TouchIcon    []byte
 	TouchIconURL string
 	// FaviconUp and FaviconDown are the SVG tab icons for all up and for
-	// one or more down, with their versioned URLs. An SVG logo is its own
-	// up icon.
+	// one or more down, with their versioned URLs.
 	FaviconUp, FaviconDown       []byte
 	FaviconUpURL, FaviconDownURL string
 }
@@ -70,14 +69,10 @@ func (s *Server) setBrand(b brand.Brand) {
 		st.TouchIcon = icon
 		st.TouchIconURL = "/brand/apple-touch-icon.png?v=" + shortHash(icon)
 	}
+	st.FaviconUp = brand.Favicon(b, builtinLogo(), false)
+	st.FaviconUpURL = "/brand/favicon-up.svg?v=" + shortHash(st.FaviconUp)
 	st.FaviconDown = brand.Favicon(b, builtinLogo(), true)
 	st.FaviconDownURL = "/brand/favicon-down.svg?v=" + shortHash(st.FaviconDown)
-	if b.Logo.Type == "image/svg+xml" {
-		st.FaviconUpURL = st.LogoURL
-	} else {
-		st.FaviconUp = brand.Favicon(b, builtinLogo(), false)
-		st.FaviconUpURL = "/brand/favicon-up.svg?v=" + shortHash(st.FaviconUp)
-	}
 	s.brand.Store(st)
 }
 

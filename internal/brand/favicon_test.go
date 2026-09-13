@@ -11,8 +11,8 @@ import (
 )
 
 // TestFavicon builds each tab icon from the real logo.svg and checks the
-// parts that show the state: the banner fill of the mark and the dot on a
-// PNG logo. Every icon must be well-formed XML.
+// parts that show the state: the banner fill of the mark and the dot on an
+// uploaded logo. Every icon must be well-formed XML.
 func TestFavicon(t *testing.T) {
 	mark, err := assets.Static.ReadFile("static/brand/logo.svg")
 	if err != nil {
@@ -20,7 +20,8 @@ func TestFavicon(t *testing.T) {
 	}
 	pngLogo := Logo{Data: []byte("\x89PNG\r\n\x1a\nfake"), Type: "image/png"}
 	svgLogo := Logo{Data: []byte("<svg/>"), Type: "image/svg+xml"}
-	image := `<image href="data:image/png;base64,` + base64.StdEncoding.EncodeToString(pngLogo.Data) + `"`
+	pngImage := `<image href="data:image/png;base64,` + base64.StdEncoding.EncodeToString(pngLogo.Data) + `"`
+	svgImage := `<image href="data:image/svg+xml;base64,` + base64.StdEncoding.EncodeToString(svgLogo.Data) + `"`
 	dot := `<circle cx="51.2" cy="51.2" r="12.8" fill="` + DownColor + `"`
 	tests := []struct {
 		name      string
@@ -30,9 +31,10 @@ func TestFavicon(t *testing.T) {
 	}{
 		{"mark up", Default, false, []string{`fill="` + UpColor + `"`}, []string{"var(", DownColor}},
 		{"mark down", Default, true, []string{`fill="` + DownColor + `"`}, []string{"var(", UpColor}},
-		{"svg logo gets the mark", Brand{Logo: svgLogo}, true, []string{`fill="` + DownColor + `"`}, []string{"<image"}},
-		{"png logo up", Brand{Logo: pngLogo}, false, []string{image}, []string{"<circle"}},
-		{"png logo down", Brand{Logo: pngLogo}, true, []string{image, dot}, nil},
+		{"png logo up", Brand{Logo: pngLogo}, false, []string{pngImage}, []string{"<circle"}},
+		{"png logo down", Brand{Logo: pngLogo}, true, []string{pngImage, dot}, nil},
+		{"svg logo up", Brand{Logo: svgLogo}, false, []string{svgImage}, []string{"<circle", "var("}},
+		{"svg logo down", Brand{Logo: svgLogo}, true, []string{svgImage, dot}, []string{"var("}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

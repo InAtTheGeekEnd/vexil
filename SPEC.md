@@ -430,7 +430,7 @@ On failure, the failed part shows a short reason, for example `"database": "lock
 - The browser opens one SSE connection to `/events`.
 - Events: `check` (monitor id, ok, latency), `state` (monitor id, new state).
 - The favicon changes color with the overall status (green, red). The server builds two SVG icons in the light theme colors, one for all up and one for one or more down. The page links the icon for its state, and a state change swaps the link between the two. No canvas.
-- The built-in logo gets its banner in green or red. A PNG logo is shown as it is when all are up, and with a red dot in the bottom right corner while one or more monitors are down. An SVG logo is shown as it is when all are up, and the built-in down icon replaces it while one or more monitors are down.
+- The built-in logo gets its banner in green or red. An uploaded logo, SVG or PNG, is shown as it is when all are up, and with a red dot in the bottom right corner while one or more monitors are down.
 - The icons are SVG, not PNG: on a reload Safari replaces the icon of a page only with an SVG. Every icon link ends with a fragment that is new on each load and each swap, because Safari fetches only an icon URL it has not cached.
 - The tab title shows the count of down monitors: "(2) vexil".
 

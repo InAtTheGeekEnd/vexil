@@ -22,13 +22,13 @@ var bannerFill = regexp.MustCompile(`fill="var\(--accent[^"]*\)"`)
 // the built-in logo.svg. The icons are SVG and not PNG because on a reload
 // Safari replaces the icon of a page only with an SVG.
 //
-// The built-in logo gets its banner in green or red. A PNG logo is shown
-// as it is, with a red dot in the bottom right corner when down. Any other
-// brand gets the built-in icon.
+// The built-in logo gets its banner in green or red. An uploaded logo, SVG
+// or PNG, is shown as it is, with a red dot in the bottom right corner when
+// down.
 func Favicon(b Brand, mark []byte, down bool) []byte {
-	if b.Logo.Type == "image/png" {
+	if !b.Logo.Empty() {
 		svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">` +
-			`<image href="data:image/png;base64,` + base64.StdEncoding.EncodeToString(b.Logo.Data) + `" width="64" height="64"/>`
+			`<image href="data:` + b.Logo.Type + `;base64,` + base64.StdEncoding.EncodeToString(b.Logo.Data) + `" width="64" height="64"/>`
 		if down {
 			svg += `<circle cx="51.2" cy="51.2" r="12.8" fill="` + DownColor + `" stroke="` + dotRing + `" stroke-width="2"/>`
 		}

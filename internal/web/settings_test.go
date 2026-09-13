@@ -370,17 +370,16 @@ func TestFaviconRoutes(t *testing.T) {
 		t.Fatal("settings page lacks the plain icon")
 	}
 
-	// An SVG logo is its own up icon. A PNG logo gets a drawn one again.
+	// An SVG logo and then a PNG logo each make new icons for both states.
 	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10"/></svg>`)
-	postMultipart(t, c, ts.URL+"/settings", map[string]string{"name": "Acme", "accent": "#4F46E5"}, svg)
-	b = s.currentBrand()
-	if b.FaviconUpURL != b.LogoURL {
-		t.Fatalf("up icon with an svg logo = %q, want the logo %q", b.FaviconUpURL, b.LogoURL)
+	for _, logo := range [][]byte{svg, pngLogo(t)} {
+		postMultipart(t, c, ts.URL+"/settings", map[string]string{"name": "Acme", "accent": "#4F46E5"}, logo)
+		next := s.currentBrand()
+		if next.FaviconUpURL == b.FaviconUpURL || next.FaviconDownURL == b.FaviconDownURL {
+			t.Fatalf("logo upload kept the icon urls %q and %q", next.FaviconUpURL, next.FaviconDownURL)
+		}
+		check(next.FaviconUpURL)
+		check(next.FaviconDownURL)
+		b = next
 	}
-	check(b.FaviconDownURL)
-	if res := get(t, c, ts.URL+"/brand/favicon-up.svg"); res.StatusCode != http.StatusNotFound {
-		t.Fatalf("drawn up icon with an svg logo = %d", res.StatusCode)
-	}
-	postMultipart(t, c, ts.URL+"/settings", map[string]string{"name": "Acme", "accent": "#4F46E5"}, pngLogo(t))
-	check(s.currentBrand().FaviconUpURL)
 }

@@ -401,7 +401,7 @@ func TestFaviconPixels(t *testing.T) {
 	}
 	up, down, blue := hexRGB(t, brand.UpColor), hexRGB(t, brand.DownColor), [3]int{0x1E, 0x40, 0xAF}
 	// Points on the 64 pixel icon: the banner of the mark, the middle of a
-	// logo and the red dot on a PNG logo.
+	// logo and the red dot on an uploaded logo.
 	banner, middle, dot := [2]int{32, 34}, [2]int{32, 32}, [2]int{51, 51}
 	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8" fill="#1E40AF"/></svg>`)
 	type pixel struct {
@@ -421,8 +421,8 @@ func TestFaviconPixels(t *testing.T) {
 		{"mark up dark", nil, false, "dark", []pixel{{banner, up}}},
 		{"png logo down", bluePNG(t), true, "light", []pixel{{middle, blue}, {dot, down}}},
 		{"png logo up", bluePNG(t), false, "light", []pixel{{middle, blue}, {dot, blue}}},
-		{"svg logo down", svg, true, "light", []pixel{{banner, down}}},
-		{"svg logo up", svg, false, "light", []pixel{{middle, blue}}},
+		{"svg logo down", svg, true, "light", []pixel{{middle, blue}, {dot, down}}},
+		{"svg logo up", svg, false, "light", []pixel{{middle, blue}, {dot, blue}}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
