@@ -330,17 +330,23 @@ func TestPauseResumeDelete(t *testing.T) {
 		t.Fatalf("alerts on pause: %v", got)
 	}
 
-	// Resume: PAUSED to PENDING, then UP on the first success.
+	// Resume: PAUSED to PENDING, then UP on the first success. The first
+	// check starts inside Reload and can finish before Status is read, so
+	// the events, not the live status, prove the order.
 	if err := env.store.SetPaused(ctx, m.ID, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := env.engine.Reload(ctx, m.ID); err != nil {
 		t.Fatal(err)
 	}
-	if st, _ := env.engine.Status(m.ID); st.State != Pending {
-		t.Fatalf("state after resume = %s, want PENDING", st.State)
+	ev = waitFor(t, events, 2*time.Second, func(ev Event) bool { return ev.State == Pending })
+	if ev.Prev != Paused || ev.Alert != AlertNone {
+		t.Fatalf("resume event = %+v", ev)
 	}
-	waitFor(t, events, 2*time.Second, func(ev Event) bool { return ev.State == Up })
+	ev = waitFor(t, events, 2*time.Second, func(ev Event) bool { return ev.State == Up })
+	if ev.Prev != Pending {
+		t.Fatalf("first check after resume = %+v", ev)
+	}
 
 	// Delete removes the status and stops the goroutine.
 	if err := env.store.DeleteMonitor(ctx, m.ID); err != nil {
