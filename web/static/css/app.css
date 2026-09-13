@@ -891,8 +891,11 @@ body.auth {
 }
 .logo-preview .brand-logo { width: 24px; height: 24px; }
 img.brand-logo { object-fit: contain; }
-.field input[type="file"] {
+/* Same specificity as the general input rule above, so the height and
+   padding win. A file input does not center its button in a taller box. */
+.field .logo-row input[type="file"] {
   flex: 1 1 200px;
+  min-width: 0;
   width: auto;
   height: auto;
   padding: 8px 12px;
