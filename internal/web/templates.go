@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"net/http"
 	"sort"
+	"strings"
 
 	"github.com/InAtTheGeekEnd/vexil/internal/brand"
 	assets "github.com/InAtTheGeekEnd/vexil/web"
@@ -62,13 +63,26 @@ func assetURL(name string) string {
 	return "/static/" + name + "?v=" + assetVersion
 }
 
+// logoSVG returns the built-in logo as an inline SVG. The file is the one
+// source of the mark: it is also the favicon and the /static/brand/logo.svg
+// asset. Inline, the strokes follow the text color and the banner follows
+// the accent color through the CSS custom property.
+func logoSVG() template.HTML {
+	b, err := fs.ReadFile(assets.Static, "static/brand/logo.svg")
+	if err != nil {
+		panic("embedded logo unreadable: " + err.Error())
+	}
+	svg := strings.Replace(strings.TrimSpace(string(b)), "<svg ", `<svg class="brand-logo" width="22" height="22" aria-hidden="true" focusable="false" `, 1)
+	return template.HTML(svg)
+}
+
 // parseTemplates parses each page together with the layout.
 func parseTemplates() (map[string]*template.Template, error) {
 	pages, err := fs.Glob(assets.Templates, "templates/*.html")
 	if err != nil {
 		return nil, err
 	}
-	funcs := template.FuncMap{"asset": assetURL}
+	funcs := template.FuncMap{"asset": assetURL, "logo": logoSVG}
 	out := make(map[string]*template.Template, len(pages))
 	for _, page := range pages {
 		if page == "templates/layout.html" {

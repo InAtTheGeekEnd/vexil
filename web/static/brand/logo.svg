@@ -1,6 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Logo">
-  <!-- A vexillum: a small banner that hangs from a crossbar on a pole. -->
-  <rect x="6" y="3" width="2.5" height="26" rx="1.25" fill="#6B7280"/>
-  <rect x="3" y="7" width="26" height="2.5" rx="1.25" fill="#6B7280"/>
-  <path d="M10 11h15v13l-3.75-2.4L17.5 24l-3.75-2.4L10 24z" fill="#4F46E5"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none" stroke="currentColor" stroke-width="20" stroke-linecap="round" stroke-linejoin="round" color="#6B7280"><path d="M88.955 152.918h334.089v291.205H88.955z" fill="var(--accent, #4F46E5)"/><path d="M88.955 109.508h334.089v43.41H88.955z"/><path d="M232.652 502v-57.877h46.695V502"/><rect x="42.692" y="86.965" width="46.264" height="88.496" rx="23.132"/><rect x="423.044" y="86.965" width="46.264" height="88.496" rx="23.132"/><path d="M256 10l-35.805 54.121 21.192 45.387h49.396l21.022-45.387z"/></svg>

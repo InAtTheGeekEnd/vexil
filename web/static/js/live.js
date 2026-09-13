@@ -22,12 +22,15 @@
     return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   }
 
+  // favicon returns the built-in logo from the page header with the banner
+  // filled in the status color, as an SVG data URL.
   function favicon(color) {
-    var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">' +
-      '<rect x="6" y="3" width="2.5" height="26" rx="1.25" fill="#6B7280"/>' +
-      '<rect x="3" y="7" width="26" height="2.5" rx="1.25" fill="#6B7280"/>' +
-      '<path d="M10 11h15v13l-3.75-2.4L17.5 24l-3.75-2.4L10 24z" fill="' + color + '"/></svg>';
-    return "data:image/svg+xml," + encodeURIComponent(svg);
+    var mark = document.querySelector("svg.brand-logo");
+    if (!mark) return "";
+    var svg = mark.cloneNode(true);
+    svg.removeAttribute("class");
+    svg.querySelector("[fill^='var(']").setAttribute("fill", color);
+    return "data:image/svg+xml," + encodeURIComponent(svg.outerHTML);
   }
 
   // markedLogo returns the uploaded logo with a red dot in the bottom right
@@ -67,7 +70,8 @@
   function setIcon() {
     if (!icon) return;
     if (!logo) {
-      icon.setAttribute("href", favicon(token(down > 0 ? "--down" : "--up")));
+      var href = favicon(token(down > 0 ? "--down" : "--up"));
+      if (href) icon.setAttribute("href", href);
       return;
     }
     icon.setAttribute("href", (down > 0 && markedLogo()) || logo);
