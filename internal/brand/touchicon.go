@@ -36,16 +36,16 @@ func TouchIcon(b Brand) ([]byte, error) {
 }
 
 // The mark from web/static/brand/logo.svg in its 512 unit viewBox. Every
-// stroke is 28 units wide with round joins and caps, so a stroked
+// stroke is 20 units wide with round joins and caps, so a stroked
 // rectangle becomes a rounded rectangle half a stroke larger and a
 // stroked line becomes a capsule. Drawn in one color, the banner and its
-// crossbar merge into one rectangle.
+// crossbar merge into one rectangle, so the crossbar is not drawn.
 const (
-	markHalfStroke = 14.0
-	markFinialR    = 23.132 + markHalfStroke
+	markHalfStroke = 10.0
+	markFinialR    = 23 + markHalfStroke
 	// The bounds of the drawn mark, strokes included.
-	markMinX = 65.824 - markFinialR
-	markMaxX = 446.176 + markFinialR
+	markMinX = 66 - markFinialR
+	markMaxX = 446 + markFinialR
 	markMinY = 10 - markHalfStroke
 	markMaxY = 502 + markHalfStroke
 	// The mark takes this share of the icon height.
@@ -53,10 +53,10 @@ const (
 )
 
 var (
-	markBanner  = box{88.955, 109.508, 423.044, 444.123}
-	markFinials = []seg{{65.824, 110.097, 65.824, 152.329}, {446.176, 110.097, 446.176, 152.329}}
-	markFeet    = []seg{{232.652, 502, 232.652, 444.123}, {232.652, 444.123, 279.347, 444.123}, {279.347, 444.123, 279.347, 502}}
-	markSpike   = []pt{{256, 10}, {220.195, 64.121}, {241.387, 109.508}, {290.783, 109.508}, {311.805, 64.121}}
+	markBanner  = box{89, 110, 423, 444}
+	markFinials = []seg{{66, 110, 66, 152}, {446, 110, 446, 152}}
+	markFeet    = []seg{{233, 502, 233, 444}, {233, 444, 279, 444}, {279, 444, 279, 502}}
+	markSpike   = []pt{{256, 10}, {220, 64}, {241, 110}, {271, 110}, {292, 64}}
 
 	markScale   = markShare * TouchIconSize / (markMaxY - markMinY)
 	markOffsetX = (TouchIconSize-(markMaxX-markMinX)*markScale)/2 - markMinX*markScale
