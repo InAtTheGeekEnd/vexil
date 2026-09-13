@@ -1,6 +1,7 @@
 // The public status page updates itself every minute. It fetches the page
-// again and swaps only the status content, so nothing reloads and focus
-// stays where it is. It pauses while the tab is hidden.
+// again and swaps the status content, the title and the tab icon, so
+// nothing reloads and focus stays where it is. It pauses while the tab is
+// hidden.
 (function () {
   "use strict";
   var main = document.querySelector("main[data-status]");
@@ -14,9 +15,20 @@
     var doc = new DOMParser().parseFromString(html, "text/html");
     var next = doc.querySelector("main[data-status]");
     if (!next) return;
+    document.title = doc.title || document.title;
+    setIcon(doc.querySelector("link[rel=icon]"));
     if (main.contains(document.activeElement)) return; // keep the user's focus
     if (next.innerHTML !== main.innerHTML) main.innerHTML = next.innerHTML;
-    document.title = doc.title || document.title;
+  }
+
+  // setIcon takes the tab icon of the fetched page when its state differs.
+  // Its href has a new fragment: Safari fetches only an icon URL it has not
+  // cached.
+  function setIcon(next) {
+    var icon = document.querySelector("link[rel=icon]");
+    if (!icon || !next) return;
+    var href = next.getAttribute("href");
+    if (href.split("#")[0] !== icon.getAttribute("href").split("#")[0]) icon.setAttribute("href", href);
   }
 
   function refresh() {

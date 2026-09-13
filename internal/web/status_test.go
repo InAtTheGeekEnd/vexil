@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -112,5 +113,41 @@ func TestBadgeSVG(t *testing.T) {
 	svg = badgeSVG(long, "up", "#16A34A")
 	if !strings.Contains(svg, `aria-label="`+long+`: up"`) || strings.Contains(svg, ">"+long+"<") || !strings.Contains(svg, "…<") {
 		t.Errorf("long badge label is not shortened: %s", svg)
+	}
+}
+
+// TestStatusIcon loads the public status page as a visitor who is not
+// logged in. The tab icon and the title count public monitors only.
+func TestStatusIcon(t *testing.T) {
+	tests := []struct {
+		name                    string
+		privateDown, publicDown bool
+		down                    bool
+	}{
+		{"private monitor down", true, false, false},
+		{"public monitor down", false, true, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, st, _ := seedServer(t, seed{name: "Private", down: tt.privateDown}, seed{name: "Public", down: tt.publicDown, public: true})
+			setPassword(t, st)
+			ts := httptest.NewServer(s)
+			t.Cleanup(ts.Close)
+			b := s.currentBrand()
+			icon, title := b.FaviconUpURL, "<title>Status · "+b.Name+"</title>"
+			if tt.down {
+				icon, title = b.FaviconDownURL, "<title>(1) Status · "+b.Name+"</title>"
+			}
+			page := body(t, get(t, ts.Client(), ts.URL+"/status"))
+			if want := `<link rel="icon" href="` + icon + `#`; !strings.Contains(page, want) {
+				t.Errorf("status page lacks %q", want)
+			}
+			if !strings.Contains(page, title) {
+				t.Errorf("status page lacks %q", title)
+			}
+			if res := get(t, ts.Client(), ts.URL+icon); res.StatusCode != http.StatusOK || res.Header.Get("Content-Type") != "image/svg+xml" {
+				t.Errorf("icon for a visitor = %d %q", res.StatusCode, res.Header.Get("Content-Type"))
+			}
+		})
 	}
 }

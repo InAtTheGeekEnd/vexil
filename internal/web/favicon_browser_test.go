@@ -251,10 +251,11 @@ func waitFor(t *testing.T, c *chrome, session, expr, what string) {
 	t.Fatalf("timed out waiting for %s", what)
 }
 
-// openDashboard opens the dashboard with a theme in headless Chrome and
-// returns the page session. It loads the page twice with the theme and
-// checks that the icon URL is new on the second load.
-func openDashboard(t *testing.T, path, base, theme string) (*chrome, string) {
+// openPage opens a page with a theme in headless Chrome and returns the
+// page session. init, when set, runs before the page scripts on every load.
+// It loads the page twice with the theme and checks that the icon URL is
+// new on the second load.
+func openPage(t *testing.T, path, pageURL, theme, init string) (*chrome, string) {
 	t.Helper()
 	c := startChrome(t, path)
 	var target struct {
@@ -271,18 +272,21 @@ func openDashboard(t *testing.T, path, base, theme string) (*chrome, string) {
 	}
 	session := attached.SessionID
 	c.call(session, "Page.enable", map[string]any{})
+	if init != "" {
+		c.call(session, "Page.addScriptToEvaluateOnNewDocument", map[string]any{"source": init})
+	}
 	load := func() string {
 		// The marker is gone once the new document has replaced the old one.
 		var ok bool
 		c.eval(session, "(window.probeOld = true)", &ok)
-		c.call(session, "Page.navigate", map[string]any{"url": base + "/"})
-		waitFor(t, c, session, "document.readyState === 'complete' && !window.probeOld", "the dashboard to load")
+		c.call(session, "Page.navigate", map[string]any{"url": pageURL})
+		waitFor(t, c, session, "document.readyState === 'complete' && !window.probeOld", "the page to load")
 		var href string
 		c.eval(session, "document.querySelector('link[rel=icon]').getAttribute('href')", &href)
 		return href
 	}
 	// The theme is chosen by the page script from localStorage, so it is
-	// set on the origin first and the dashboard loaded again.
+	// set on the origin first and the page loaded again.
 	load()
 	var ok bool
 	c.eval(session, "(localStorage.setItem('theme', "+strconv.Quote(theme)+"), true)", &ok)
@@ -345,10 +349,16 @@ func bluePNG(t *testing.T) []byte {
 	return buf.Bytes()
 }
 
-// dashboardServer is a running server with one monitor that is up and,
-// when down is true, one more that is down. It returns the id of the
-// monitor that is up. Both point at a closed port, so a real check fails.
-func dashboardServer(t *testing.T, down bool) (*Server, *store.Store, int64) {
+// seed is a monitor for seedServer, with two recent checks that passed or,
+// when down is true, two that failed.
+type seed struct {
+	name         string
+	down, public bool
+}
+
+// seedServer is a running server with the seeded monitors. It returns their
+// ids in order. Every monitor points at a closed port, so a real check fails.
+func seedServer(t *testing.T, seeds ...seed) (*Server, *store.Store, []int64) {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	st, err := store.Open(context.Background(), t.TempDir())
@@ -358,20 +368,16 @@ func dashboardServer(t *testing.T, down bool) (*Server, *store.Store, int64) {
 	t.Cleanup(func() { st.Close() })
 	ctx := context.Background()
 	now := time.Now()
-	names := []string{"Alpha"}
-	if down {
-		names = append(names, "Bravo")
-	}
 	var ids []int64
-	for i, name := range names {
-		m := &store.Monitor{Name: name, Type: store.TypeTCP, Target: "127.0.0.1:1", IntervalS: 900}
+	for _, sd := range seeds {
+		m := &store.Monitor{Name: sd.name, Type: store.TypeTCP, Target: "127.0.0.1:1", IntervalS: 900, Public: sd.public}
 		if err := st.CreateMonitor(ctx, m); err != nil {
 			t.Fatal(err)
 		}
 		ids = append(ids, m.ID)
 		for _, age := range []time.Duration{time.Minute, 2 * time.Minute} {
-			c := store.Check{MonitorID: m.ID, At: now.Add(-age), OK: i == 0, LatencyMS: 12}
-			if i > 0 {
+			c := store.Check{MonitorID: m.ID, At: now.Add(-age), OK: !sd.down, LatencyMS: 12}
+			if sd.down {
 				c.Error = "connection refused"
 			}
 			if err := st.InsertCheck(ctx, c); err != nil {
@@ -388,6 +394,19 @@ func dashboardServer(t *testing.T, down bool) (*Server, *store.Store, int64) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return s, st, ids
+}
+
+// dashboardServer is a running server with one monitor that is up and,
+// when down is true, one more that is down. It returns the id of the
+// monitor that is up.
+func dashboardServer(t *testing.T, down bool) (*Server, *store.Store, int64) {
+	t.Helper()
+	seeds := []seed{{name: "Alpha"}}
+	if down {
+		seeds = append(seeds, seed{name: "Bravo", down: true})
+	}
+	s, st, ids := seedServer(t, seeds...)
 	return s, st, ids[0]
 }
 
@@ -438,7 +457,7 @@ func TestFaviconPixels(t *testing.T) {
 			if tc.down {
 				wantHref, wantTitle = b.FaviconDownURL, "(1) "+wantTitle
 			}
-			page, session := openDashboard(t, path, ts.URL, tc.theme)
+			page, session := openPage(t, path, ts.URL+"/", tc.theme, "")
 			var points [][2]int
 			for _, px := range tc.pixels {
 				points = append(points, px.at)
@@ -464,7 +483,7 @@ func TestFaviconPixels(t *testing.T) {
 	t.Run("live change", func(t *testing.T) {
 		s, st, alpha := dashboardServer(t, false)
 		ts, _ := browserFixture(t, s, st)
-		page, session := openDashboard(t, path, ts.URL, "light")
+		page, session := openPage(t, path, ts.URL+"/", "light", "")
 		row := `document.querySelector('.mon-row[data-id="` + strconv.FormatInt(alpha, 10) + `"] .mon-checked')`
 		var at string
 		page.eval(session, "String("+row+".dataset.at)", &at)
@@ -487,5 +506,69 @@ func TestFaviconPixels(t *testing.T) {
 		if want := "(1) Dashboard · " + b.Name; p.Title != want {
 			t.Errorf("title = %q, want %q", p.Title, want)
 		}
+	})
+}
+
+// TestStatusIconPixels reads the tab icon of the public status page in
+// headless Chrome as a visitor who is not logged in. A private monitor that
+// is down must not turn it red, a public one must, and the minute refresh
+// must swap it while the page is open.
+func TestStatusIconPixels(t *testing.T) {
+	path := chromePath()
+	if path == "" {
+		t.Skip("no Chrome or Chromium found; set VEXIL_CHROME")
+	}
+	banner := [2]int{32, 34}
+	// fastRefresh runs before the page scripts and turns the one minute
+	// refresh timer into half a second.
+	const fastRefresh = `(function () { var wait = window.setTimeout; window.setTimeout = function (f, d) { return wait(f, d >= 60000 ? 500 : d); }; })();`
+	open := func(t *testing.T, privateDown, publicDown bool, init string) (*Server, int64, *chrome, string) {
+		t.Helper()
+		s, st, ids := seedServer(t, seed{name: "Private", down: privateDown}, seed{name: "Public", down: publicDown, public: true})
+		setPassword(t, st)
+		ts := httptest.NewServer(s)
+		t.Cleanup(ts.Close)
+		page, session := openPage(t, path, ts.URL+"/status", "light", init)
+		return s, ids[1], page, session
+	}
+	check := func(t *testing.T, s *Server, page *chrome, session string, down bool) {
+		t.Helper()
+		b := s.currentBrand()
+		href, color, title := b.FaviconUpURL, brand.UpColor, "Status · "+b.Name
+		if down {
+			href, color, title = b.FaviconDownURL, brand.DownColor, "(1) "+title
+		}
+		p := iconPixels(t, page, session, banner)
+		if !strings.HasPrefix(p.Href, href+"#") {
+			t.Errorf("icon href = %q, want %q with a fragment", p.Href, href)
+		}
+		if want := hexRGB(t, color); !near(p.Pixels[0], want) {
+			t.Errorf("banner pixel = %v, want %v", p.Pixels[0], want)
+		}
+		if p.Title != title {
+			t.Errorf("title = %q, want %q", p.Title, title)
+		}
+	}
+
+	t.Run("private monitor down", func(t *testing.T) {
+		s, _, page, session := open(t, true, false, "")
+		check(t, s, page, session, false)
+	})
+	t.Run("public monitor down", func(t *testing.T) {
+		s, _, page, session := open(t, false, true, "")
+		check(t, s, page, session, true)
+	})
+	t.Run("refresh swaps the icon", func(t *testing.T) {
+		s, public, page, session := open(t, true, false, fastRefresh)
+		check(t, s, page, session, false)
+		// Two failed checks turn the public monitor down.
+		for i := 0; i < 2; i++ {
+			if _, err := s.engine.CheckNow(context.Background(), public); err != nil {
+				t.Fatal(err)
+			}
+		}
+		down := s.currentBrand().FaviconDownURL + "#"
+		waitFor(t, page, session, "document.querySelector('link[rel=icon]').getAttribute('href').indexOf("+strconv.Quote(down)+") === 0", "the refresh to swap the icon")
+		check(t, s, page, session, true)
 	})
 }

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <title>{{if .Down}}({{.Down}}) {{end}}{{block "title" .}}{{.Brand.Name}}{{end}}</title>
-{{if .Live}}<link rel="icon" href="{{.Icon}}" data-up="{{.IconUp}}" data-down="{{.IconDown}}">{{else if .Logo}}<link rel="icon" href="{{.Logo}}">{{else}}<link rel="icon" href="{{asset "brand/logo.svg"}}" type="image/svg+xml">{{end}}
+{{if .Icon}}<link rel="icon" href="{{.Icon}}" data-up="{{.IconUp}}" data-down="{{.IconDown}}">{{else if .Logo}}<link rel="icon" href="{{.Logo}}">{{else}}<link rel="icon" href="{{asset "brand/logo.svg"}}" type="image/svg+xml">{{end}}
 <link rel="apple-touch-icon" sizes="180x180" href="{{.TouchIcon}}">
 <link rel="stylesheet" href="{{asset "css/app.css"}}">
 <link rel="stylesheet" href="{{.Theme}}">

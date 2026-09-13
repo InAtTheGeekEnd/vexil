@@ -429,7 +429,7 @@ On failure, the failed part shows a short reason, for example `"database": "lock
 
 - The browser opens one SSE connection to `/events`.
 - Events: `check` (monitor id, ok, latency), `state` (monitor id, new state).
-- The favicon changes color with the overall status (green, red). The server builds two SVG icons in the light theme colors, one for all up and one for one or more down. The page links the icon for its state, and a state change swaps the link between the two. No canvas.
+- The favicon changes color with the overall status (green, red) on the dashboard, the monitor detail page and the public status page. The server builds two SVG icons in the light theme colors, one for all up and one for one or more down. The page links the icon for its state. On the dashboard and the detail page a state change swaps the link between the two. On the public status page the 60-second refresh swaps it, and only public monitors count (see 11). No canvas.
 - The built-in logo gets its banner in green or red. An uploaded logo, SVG or PNG, is shown as it is when all are up, and with a red dot in the bottom right corner while one or more monitors are down.
 - The icons are SVG, not PNG: on a reload Safari replaces the icon of a page only with an SVG. Every icon link ends with a fragment that is new on each load and each swap, because Safari fetches only an icon URL it has not cached.
 - The tab title shows the count of down monitors: "(2) vexil".
@@ -511,6 +511,7 @@ All text must pass WCAG AA contrast.
 - Target URLs and hosts are never shown on the public page.
 - Custom domain: the user points a domain at vexil through a reverse proxy. The README shows Caddy and nginx examples.
 - The page updates itself every 60 seconds (no SSE for the public). A small script fetches the page and replaces only the status content in place: no reload, no focus change. It pauses while the tab is hidden.
+- The tab title count and the favicon (see 9.6) count only the public monitors. A private monitor that is down never turns them red. The 60-second refresh updates both with the status content.
 
 ---
 

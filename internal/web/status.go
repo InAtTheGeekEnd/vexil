@@ -41,7 +41,8 @@ type statusIncident struct {
 }
 
 // handleStatus renders the public page. It shows public monitors only and
-// never their targets.
+// never their targets. The tab title and the tab icon count the public
+// monitors only.
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	monitors, err := s.store.Monitors(ctx)
@@ -89,7 +90,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		c.Incidents = append(c.Incidents, statusIncident{Monitor: inc.MonitorName, Start: row.Start, Duration: row.Duration, Reason: row.Reason, Open: row.Open})
 	}
 	w.Header().Set("Cache-Control", "no-cache")
-	s.render(w, http.StatusOK, "status.html", pageData{Content: c, Down: down})
+	s.render(w, http.StatusOK, "status.html", pageData{Content: c, Down: down, StatusIcon: true})
 }
 
 // --- Badge ---

@@ -23,7 +23,7 @@ type pageData struct {
 	Logo      string // URL of the uploaded logo, "" for the built-in one
 	Theme     string // URL of the accent style sheet
 	TouchIcon string // URL of the iOS home screen icon
-	// Icon is the href of the tab icon on a live page: IconUp or IconDown
+	// Icon is the href of the tab icon on a page that shows the state: IconUp or IconDown
 	// for its state, with a fragment that is new on every render. Safari
 	// fetches only an icon URL it has not cached, so a fixed URL would keep
 	// the color of an earlier visit.
@@ -34,9 +34,11 @@ type pageData struct {
 	Message                string
 	Nav                    string // the active nav item: "dashboard", "notifications" or "settings"
 	// Live makes the page open the SSE stream. Down is the number of
-	// monitors that are down, shown in the tab title.
-	Live bool
-	Down int
+	// monitors that are down, shown in the tab title. A live page, and a
+	// page with StatusIcon set, also shows it in the tab icon.
+	Live       bool
+	StatusIcon bool
+	Down       int
 	// Content carries page-specific data.
 	Content any
 }
@@ -125,7 +127,7 @@ func (s *Server) render(w http.ResponseWriter, status int, name string, data pag
 		data.Brand, data.Logo, data.Theme, data.TouchIcon = b.Brand, b.LogoURL, b.ThemeURL, b.TouchIconURL
 		data.IconUp, data.IconDown = b.FaviconUpURL, b.FaviconDownURL
 	}
-	if data.Live {
+	if data.Live || data.StatusIcon {
 		data.Icon = data.IconUp
 		if data.Down > 0 {
 			data.Icon = data.IconDown
