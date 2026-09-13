@@ -13,7 +13,15 @@
   var icon = document.querySelector("link[rel=icon]");
   // The URL of an uploaded logo, "" when the built-in icon is in use.
   var logo = icon && icon.hasAttribute("data-custom") ? icon.getAttribute("href") : "";
-  var logoImage = null;
+  // The uploaded logo is drawn from the header image, which is already on
+  // the page: no second request, and it is usually loaded by the time this
+  // script runs.
+  var logoImage = logo ? document.querySelector("img.brand-logo") : null;
+  if (logo && !logoImage) {
+    logoImage = new Image();
+    logoImage.src = logo;
+  }
+  if (logoImage && !logoImage.complete) logoImage.addEventListener("load", setIcon);
   var down = 0;
 
   // --- Tab title and favicon ---
@@ -36,12 +44,6 @@
   // markedLogo returns the uploaded logo with a red dot in the bottom right
   // corner as a PNG data URL, or "" until the logo has loaded.
   function markedLogo() {
-    if (!logoImage) {
-      logoImage = new Image();
-      logoImage.onload = setIcon;
-      logoImage.src = logo;
-      return "";
-    }
     if (!logoImage.complete) return "";
     var size = 64;
     var canvas = document.createElement("canvas");
@@ -67,14 +69,14 @@
     }
   }
 
+  // setIcon sets the tab icon for the current state. The fragment makes
+  // the URL new on every call: Safari keeps one icon per page URL and only
+  // fetches an icon URL it has not cached, so without it the tab keeps the
+  // color of the first visit. The fragment does not change the image.
   function setIcon() {
     if (!icon) return;
-    if (!logo) {
-      var href = favicon(token(down > 0 ? "--down" : "--up"));
-      if (href) icon.setAttribute("href", href);
-      return;
-    }
-    icon.setAttribute("href", (down > 0 && markedLogo()) || logo);
+    var href = logo ? (down > 0 && markedLogo()) || logo : favicon(token(down > 0 ? "--down" : "--up"));
+    if (href) icon.setAttribute("href", href + "#" + Date.now());
   }
 
   function setDown(n) {
