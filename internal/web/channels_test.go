@@ -43,6 +43,10 @@ func TestChannelLifecycle(t *testing.T) {
 	if res.StatusCode != http.StatusBadRequest || !strings.Contains(body(t, res), "Enter a full URL") {
 		t.Fatalf("bad form = %d", res.StatusCode)
 	}
+	res = postForm(t, c, ts.URL+"/notifications/new", url.Values{"type": {"ntfy"}, "name": {strings.Repeat("a", 61)}, "ntfy_url": {target.URL + "/alerts"}})
+	if res.StatusCode != http.StatusBadRequest || !strings.Contains(body(t, res), "60 characters or fewer") {
+		t.Fatalf("long name form = %d", res.StatusCode)
+	}
 
 	// Create. The browser posts the inputs of every type; only the chosen
 	// type's inputs count. The name comes from the type.

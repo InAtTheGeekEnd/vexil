@@ -159,6 +159,7 @@ func TestMonitorFormValidation(t *testing.T) {
 		{"dns bad ip", url.Values{"type": {"dns"}, "hostname": {"example.com"}, "expected_ip": {"nope"}, "interval": {"60"}}, "valid IP address"},
 		{"bad interval", url.Values{"type": {"push"}, "name": {"Job"}, "interval": {"45"}}, "Choose an interval"},
 		{"push without name", url.Values{"type": {"push"}, "interval": {"60"}}, "Enter a name"},
+		{"name too long", url.Values{"type": {"push"}, "name": {strings.Repeat("a", 61)}, "interval": {"60"}}, "60 characters or fewer"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

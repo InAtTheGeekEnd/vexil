@@ -44,9 +44,10 @@
       </div>
       {{end}}{{end}}
 
-      <label class="field">
+      <label class="field{{if index .Errors "name"}} invalid{{end}}">
         <span>Name <span class="muted">(optional)</span></span>
-        <input type="text" name="name" value="{{.Name}}" placeholder="Filled from the type" autocomplete="off" maxlength="80">
+        <input type="text" name="name" value="{{.Name}}" placeholder="Filled from the type" autocomplete="off" maxlength="60">
+        {{with index .Errors "name"}}<span class="error">{{.}}</span>{{end}}
       </label>
     </div>
 

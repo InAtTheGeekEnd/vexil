@@ -11,10 +11,17 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/InAtTheGeekEnd/vexil/internal/engine"
 	"github.com/InAtTheGeekEnd/vexil/internal/store"
 )
+
+// maxNameLen limits a monitor or channel name. The forms set the same
+// limit with maxlength.
+const maxNameLen = 60
+
+const nameTooLong = "The name is too long. Use 60 characters or fewer."
 
 // Interval choices from SPEC.md section 5.
 var intervals = []struct {
@@ -493,6 +500,8 @@ func (f *monitorForm) validate() store.Monitor {
 	}
 	if f.Name == "" {
 		f.Errors["name"] = "Enter a name."
+	} else if utf8.RuneCountInString(f.Name) > maxNameLen {
+		f.Errors["name"] = nameTooLong
 	}
 	m.Name = f.Name
 	if !validInterval(f.Interval) {

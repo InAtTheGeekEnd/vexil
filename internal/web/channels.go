@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/InAtTheGeekEnd/vexil/internal/notify"
 	"github.com/InAtTheGeekEnd/vexil/internal/store"
@@ -194,6 +195,9 @@ func parseChannelForm(r *http.Request, typ string, old map[string]string) (chann
 	}
 	c.Name = f.Name
 	f.Errors = notify.Validate(c)
+	if utf8.RuneCountInString(f.Name) > maxNameLen {
+		f.Errors["name"] = nameTooLong
+	}
 	return f, c
 }
 
