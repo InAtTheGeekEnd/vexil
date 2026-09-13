@@ -3,6 +3,8 @@ package web
 import (
 	"bytes"
 	"context"
+	"image"
+	"image/png"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -263,4 +265,73 @@ func TestSettingsNeedLogin(t *testing.T) {
 			t.Errorf("%s %s = %d -> %q, want redirect to /login", tc.method, tc.path, rec.Code, rec.Header().Get("Location"))
 		}
 	}
+}
+
+func TestTouchIcon(t *testing.T) {
+	s, st := newTestServer(t, Options{})
+	ts, c := loggedIn(t, s, st)
+
+	iconURL := func() string {
+		u := s.currentBrand().TouchIconURL
+		if !strings.HasPrefix(u, "/brand/apple-touch-icon.png?v=") {
+			t.Fatalf("touch icon url = %q", u)
+		}
+		return u
+	}
+	check := func(u string) {
+		t.Helper()
+		res := get(t, c, ts.URL+u)
+		if res.StatusCode != http.StatusOK || res.Header.Get("Content-Type") != "image/png" {
+			t.Fatalf("%s: %d %q", u, res.StatusCode, res.Header.Get("Content-Type"))
+		}
+		if res.Header.Get("Cache-Control") != "public, max-age=31536000, immutable" {
+			t.Fatalf("%s: cache = %q", u, res.Header.Get("Cache-Control"))
+		}
+		img, err := png.Decode(res.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := img.Bounds().Size(); got.X != brand.TouchIconSize || got.Y != brand.TouchIconSize {
+			t.Fatalf("size = %v", got)
+		}
+	}
+
+	first := iconURL()
+	check(first)
+	// The admin pages, the public status page and the login page link it.
+	for path, client := range map[string]*http.Client{"/": c, "/status": c, "/login": ts.Client()} {
+		if b := body(t, get(t, client, ts.URL+path)); !strings.Contains(b, `<link rel="apple-touch-icon" sizes="180x180" href="`+first+`">`) {
+			t.Fatalf("%s lacks the touch icon link", path)
+		}
+	}
+	if res := get(t, c, ts.URL+"/brand/apple-touch-icon.png"); res.Header.Get("Cache-Control") != "no-cache" {
+		t.Fatalf("unversioned cache = %q", res.Header.Get("Cache-Control"))
+	}
+
+	// A new accent and a new logo each make a new icon and URL.
+	postMultipart(t, c, ts.URL+"/settings", map[string]string{"name": "Acme", "accent": "#0E9F6E", "powered_by": "1"}, nil)
+	second := iconURL()
+	if second == first {
+		t.Fatal("accent change kept the touch icon url")
+	}
+	check(second)
+	postMultipart(t, c, ts.URL+"/settings", map[string]string{"name": "Acme", "accent": "#0E9F6E", "powered_by": "1"}, pngLogo(t))
+	third := iconURL()
+	if third == second {
+		t.Fatal("logo upload kept the touch icon url")
+	}
+	check(third)
+}
+
+func pngLogo(t *testing.T) []byte {
+	t.Helper()
+	img := image.NewNRGBA(image.Rect(0, 0, 8, 8))
+	for i := 0; i < len(img.Pix); i += 4 {
+		img.Pix[i], img.Pix[i+3] = 255, 255
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
 }

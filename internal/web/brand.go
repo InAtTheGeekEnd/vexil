@@ -2,7 +2,9 @@ package web
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"net/http"
 	"strings"
 
@@ -18,6 +20,10 @@ type brandState struct {
 	LogoURL string
 	// ThemeURL is the versioned URL of the accent style sheet.
 	ThemeURL string
+	// TouchIcon is the rendered home screen icon and TouchIconURL its
+	// versioned URL. Both are rebuilt when the brand changes.
+	TouchIcon    []byte
+	TouchIconURL string
 }
 
 var brandKeys = []string{
@@ -53,7 +59,37 @@ func (s *Server) setBrand(b brand.Brand) {
 	if !b.Logo.Empty() {
 		st.LogoURL = "/brand/logo?v=" + b.Logo.Version()
 	}
+	if icon, err := brand.TouchIcon(b); err != nil {
+		s.log.Error("draw touch icon", "err", err)
+	} else {
+		st.TouchIcon = icon
+		st.TouchIconURL = "/brand/apple-touch-icon.png?v=" + shortHash(icon)
+	}
 	s.brand.Store(st)
+}
+
+// shortHash is a cache-busting version for a file.
+func shortHash(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])[:12]
+}
+
+// handleTouchIcon serves the iOS home screen icon.
+func (s *Server) handleTouchIcon(w http.ResponseWriter, r *http.Request) {
+	b := s.currentBrand()
+	if b.TouchIcon == nil {
+		http.NotFound(w, r)
+		return
+	}
+	h := w.Header()
+	h.Set("Content-Type", "image/png")
+	h.Set("X-Content-Type-Options", "nosniff")
+	if r.URL.Query().Get("v") == strings.TrimPrefix(b.TouchIconURL, "/brand/apple-touch-icon.png?v=") {
+		h.Set("Cache-Control", "public, max-age=31536000, immutable")
+	} else {
+		h.Set("Cache-Control", "no-cache")
+	}
+	_, _ = w.Write(b.TouchIcon)
 }
 
 // currentBrand returns the brand in use.

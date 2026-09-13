@@ -100,6 +100,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /push/{token}", s.handlePush)
 	mux.HandleFunc("GET /brand/logo", s.handleLogo)
 	mux.HandleFunc("GET /brand/theme.css", s.handleTheme)
+	mux.HandleFunc("GET /brand/apple-touch-icon.png", s.handleTouchIcon)
 	mux.HandleFunc("GET /status", s.handleStatus)
 	mux.HandleFunc("GET /badge/{file}", s.handleBadge)
 

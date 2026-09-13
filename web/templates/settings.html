@@ -27,7 +27,7 @@
           <input type="file" name="logo" id="logo" accept="image/svg+xml,image/png,.svg,.png">
           {{if .LogoURL}}<button type="submit" class="btn btn-secondary btn-sm" formaction="/settings/logo/delete" formenctype="application/x-www-form-urlencoded" formnovalidate>Remove</button>{{end}}
         </div>
-        {{with index .Errors "logo"}}<span class="error">{{.}}</span>{{else}}<span class="hint">SVG or PNG, up to 512 KB. It is also the browser tab icon.</span>{{end}}
+        {{with index .Errors "logo"}}<span class="error">{{.}}</span>{{else}}<span class="hint">SVG or PNG, up to 512 KB. It is also the browser tab icon. A PNG is also the iOS home screen icon.</span>{{end}}
       </div>
       <label class="field field-short{{if index .Errors "accent"}} invalid{{end}}">
         <span>Accent color</span>
