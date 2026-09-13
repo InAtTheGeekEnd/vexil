@@ -9,7 +9,9 @@ import (
 	"io/fs"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/InAtTheGeekEnd/vexil/internal/brand"
 	assets "github.com/InAtTheGeekEnd/vexil/web"
@@ -21,11 +23,16 @@ type pageData struct {
 	Logo      string // URL of the uploaded logo, "" for the built-in one
 	Theme     string // URL of the accent style sheet
 	TouchIcon string // URL of the iOS home screen icon
-	Error     string
-	Notice    string // a green line at the top of the page
-	Title     string
-	Message   string
-	Nav       string // the active nav item: "dashboard", "notifications" or "settings"
+	// Icon is the href of the tab icon on a live page: IconUp or IconDown
+	// for its state, with a fragment that is new on every render. Safari
+	// fetches only an icon URL it has not cached, so a fixed URL would keep
+	// the color of an earlier visit.
+	Icon, IconUp, IconDown string
+	Error                  string
+	Notice                 string // a green line at the top of the page
+	Title                  string
+	Message                string
+	Nav                    string // the active nav item: "dashboard", "notifications" or "settings"
 	// Live makes the page open the SSE stream. Down is the number of
 	// monitors that are down, shown in the tab title.
 	Live bool
@@ -64,16 +71,22 @@ func assetURL(name string) string {
 	return "/static/" + name + "?v=" + assetVersion
 }
 
-// logoSVG returns the built-in logo as an inline SVG. The file is the one
-// source of the mark: it is also the favicon and the /static/brand/logo.svg
-// asset. Inline, the strokes follow the text color and the banner follows
-// the accent color through the CSS custom property.
-func logoSVG() template.HTML {
+// builtinLogo returns web/static/brand/logo.svg, the one source of the
+// mark. It is the icon of pages without live updates, the source of the tab
+// icons and, inline, the logo in the header.
+func builtinLogo() []byte {
 	b, err := fs.ReadFile(assets.Static, "static/brand/logo.svg")
 	if err != nil {
 		panic("embedded logo unreadable: " + err.Error())
 	}
-	svg := strings.Replace(strings.TrimSpace(string(b)), "<svg ", `<svg class="brand-logo" width="22" height="22" aria-hidden="true" focusable="false" `, 1)
+	return b
+}
+
+// logoSVG returns the built-in logo as an inline SVG. Inline, the strokes
+// follow the text color and the banner follows the accent color through
+// the CSS custom property.
+func logoSVG() template.HTML {
+	svg := strings.Replace(strings.TrimSpace(string(builtinLogo())), "<svg ", `<svg class="brand-logo" width="22" height="22" aria-hidden="true" focusable="false" `, 1)
 	return template.HTML(svg)
 }
 
@@ -110,6 +123,14 @@ func (s *Server) render(w http.ResponseWriter, status int, name string, data pag
 	if data.Brand.Name == "" {
 		b := s.currentBrand()
 		data.Brand, data.Logo, data.Theme, data.TouchIcon = b.Brand, b.LogoURL, b.ThemeURL, b.TouchIconURL
+		data.IconUp, data.IconDown = b.FaviconUpURL, b.FaviconDownURL
+	}
+	if data.Live {
+		data.Icon = data.IconUp
+		if data.Down > 0 {
+			data.Icon = data.IconDown
+		}
+		data.Icon += "#" + strconv.FormatInt(time.Now().UnixMilli(), 10)
 	}
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, "layout", data); err != nil {

@@ -36,7 +36,8 @@ func TestThemeCSSPassesAA(t *testing.T) {
 }
 
 // TestThemeBackgroundsMatchCSS keeps the Go constants equal to the tokens
-// in app.css, so the contrast check uses the real page colors.
+// in app.css, so the contrast check uses the real page colors and the tab
+// icons use the status colors of the light theme.
 func TestThemeBackgroundsMatchCSS(t *testing.T) {
 	css, err := assets.Static.ReadFile("static/css/app.css")
 	if err != nil {
@@ -51,6 +52,12 @@ func TestThemeBackgroundsMatchCSS(t *testing.T) {
 	}
 	if !strings.Contains(s, "--accent: "+brand.Default.Accent+";") {
 		t.Errorf("app.css --accent is not the default %s", brand.Default.Accent)
+	}
+	light := cssBlock(t, s, ":root {")
+	for token, want := range map[string]string{"--up": brand.UpColor, "--down": brand.DownColor} {
+		if !strings.Contains(light, token+": "+want+";") {
+			t.Errorf("app.css light %s is not the tab icon color %s", token, want)
+		}
 	}
 	for _, sel := range []string{"a {", ":focus-visible {", ":focus-visible::after {"} {
 		for _, line := range strings.Split(s, "\n") {

@@ -2,8 +2,11 @@ package web
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"image"
+	"image/png"
 	"io"
 	"log/slog"
 	"net/http"
@@ -11,7 +14,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -40,35 +42,21 @@ func chromePath() string {
 	return ""
 }
 
-// faviconProbe is what the harness page reports about the dashboard tab.
-type faviconProbe struct {
+// iconProbe is what the page reports about its tab icon.
+type iconProbe struct {
 	Title  string   `json:"title"`
 	Href   string   `json:"href"`
-	Custom bool     `json:"custom"`
 	Theme  string   `json:"theme"`
-	Down   string   `json:"down"`
-	Up     string   `json:"up"`
 	Pixels [][4]int `json:"pixels"`
 	Error  string   `json:"error"`
 }
 
-// faviconProbeJS runs on the dashboard. It draws the tab icon on a 64 by 64
-// canvas and resolves with the pixels at the given points, plus the status
-// colors of the page resolved to rgb().
-const faviconProbeJS = `(function (points) {
+// iconProbeJS runs on the page. It draws the tab icon on a 64 by 64 canvas
+// and resolves with the pixels at the given points.
+const iconProbeJS = `(function (points) {
   var link = document.querySelector("link[rel=icon]");
   var href = link ? link.getAttribute("href") : "";
-  var root = document.documentElement;
-  function resolve(v) {
-    var el = document.createElement("span");
-    el.style.color = getComputedStyle(root).getPropertyValue(v).trim();
-    document.body.appendChild(el);
-    var c = getComputedStyle(el).color;
-    el.remove();
-    return c;
-  }
-  var probe = { title: document.title, href: href.slice(0, 64), custom: !!(link && link.hasAttribute("data-custom")),
-    theme: root.getAttribute("data-theme") || "", down: resolve("--down"), up: resolve("--up"), pixels: [], error: "" };
+  var probe = { title: document.title, href: href, theme: document.documentElement.getAttribute("data-theme") || "", pixels: [], error: "" };
   return new Promise(function (done) {
     var img = new Image();
     img.onerror = function () { probe.error = "icon did not load"; done(probe); };
@@ -118,12 +106,10 @@ func browserFixture(t *testing.T, s *Server, st *store.Store) (*httptest.Server,
 // The protocol needs no WebSocket this way: each message is JSON followed
 // by a NUL byte on file descriptors 3 and 4.
 type chrome struct {
-	t      *testing.T
-	cmd    *exec.Cmd
-	cancel context.CancelFunc
-	w      *os.File
-	r      *bufio.Reader
-	id     int
+	t  *testing.T
+	w  *os.File
+	r  *bufio.Reader
+	id int
 }
 
 type cdpMessage struct {
@@ -143,11 +129,17 @@ func startChrome(t *testing.T, path string) *chrome {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	// The profile is not a t.TempDir: Chrome's helper processes can write
+	// to it for a moment after the browser exits, and that must not fail
+	// the test when the directory is removed.
+	profile, err := os.MkdirTemp("", "chrome-profile-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	cmd := exec.CommandContext(ctx, path,
 		"--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
-		"--user-data-dir="+filepath.Join(t.TempDir(), "profile"),
-		"--remote-debugging-pipe", "about:blank")
+		"--user-data-dir="+profile, "--remote-debugging-pipe", "about:blank")
 	cmd.ExtraFiles = []*os.File{toChrome, fromChrome}
 	if err := cmd.Start(); err != nil {
 		cancel()
@@ -155,19 +147,35 @@ func startChrome(t *testing.T, path string) *chrome {
 	}
 	toChrome.Close()
 	fromChrome.Close()
-	c := &chrome{t: t, cmd: cmd, cancel: cancel, w: w, r: bufio.NewReader(r)}
+	c := &chrome{t: t, w: w, r: bufio.NewReader(r)}
 	t.Cleanup(func() {
-		c.w.Close()
+		// A clean close lets Chrome end its helper processes before the
+		// profile is removed. Reading on keeps the pipe from filling up.
+		go func() { _, _ = io.Copy(io.Discard, c.r) }()
+		_, _ = c.send("", "Browser.close", map[string]any{})
+		exited := make(chan struct{})
+		go func() {
+			_ = cmd.Wait()
+			close(exited)
+		}()
+		select {
+		case <-exited:
+		case <-time.After(10 * time.Second):
+			cancel()
+			<-exited
+		}
 		cancel()
-		cmd.Wait()
+		w.Close()
 		r.Close()
+		for i := 0; i < 50 && os.RemoveAll(profile) != nil; i++ {
+			time.Sleep(100 * time.Millisecond)
+		}
 	})
 	return c
 }
 
-// call sends one command and returns its result. Events are skipped.
-func (c *chrome) call(session, method string, params map[string]any) json.RawMessage {
-	c.t.Helper()
+// send writes one command and returns its id.
+func (c *chrome) send(session, method string, params map[string]any) (int, error) {
 	c.id++
 	msg := map[string]any{"id": c.id, "method": method, "params": params}
 	if session != "" {
@@ -175,10 +183,18 @@ func (c *chrome) call(session, method string, params map[string]any) json.RawMes
 	}
 	b, err := json.Marshal(msg)
 	if err != nil {
-		c.t.Fatal(err)
+		return 0, err
 	}
-	if _, err := c.w.Write(append(b, 0)); err != nil {
-		c.t.Fatalf("write to chrome: %v", err)
+	_, err = c.w.Write(append(b, 0))
+	return c.id, err
+}
+
+// call sends one command and returns its result. Events are skipped.
+func (c *chrome) call(session, method string, params map[string]any) json.RawMessage {
+	c.t.Helper()
+	id, err := c.send(session, method, params)
+	if err != nil {
+		c.t.Fatalf("send %s: %v", method, err)
 	}
 	for {
 		line, err := c.r.ReadBytes(0)
@@ -189,7 +205,7 @@ func (c *chrome) call(session, method string, params map[string]any) json.RawMes
 		if err := json.Unmarshal(line[:len(line)-1], &m); err != nil {
 			c.t.Fatalf("chrome message: %v", err)
 		}
-		if m.Method != "" || m.ID != c.id {
+		if m.Method != "" || m.ID != id {
 			continue
 		}
 		if m.Error != nil {
@@ -221,9 +237,24 @@ func (c *chrome) eval(session, expr string, out any) {
 	}
 }
 
-// probeFavicon opens the dashboard with the given theme in headless Chrome,
-// waits for the tab icon to settle and reads its pixels at the points.
-func probeFavicon(t *testing.T, path, base, theme string, points ...[2]int) faviconProbe {
+// waitFor polls a page expression until it is true.
+func waitFor(t *testing.T, c *chrome, session, expr, what string) {
+	t.Helper()
+	for i := 0; i < 200; i++ {
+		var ok bool
+		c.eval(session, "!!("+expr+")", &ok)
+		if ok {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", what)
+}
+
+// openDashboard opens the dashboard with a theme in headless Chrome and
+// returns the page session. It loads the page twice with the theme and
+// checks that the icon URL is new on the second load.
+func openDashboard(t *testing.T, path, base, theme string) (*chrome, string) {
 	t.Helper()
 	c := startChrome(t, path)
 	var target struct {
@@ -240,95 +271,84 @@ func probeFavicon(t *testing.T, path, base, theme string, points ...[2]int) favi
 	}
 	session := attached.SessionID
 	c.call(session, "Page.enable", map[string]any{})
-	navigate := func() {
+	load := func() string {
+		// The marker is gone once the new document has replaced the old one.
+		var ok bool
+		c.eval(session, "(window.probeOld = true)", &ok)
 		c.call(session, "Page.navigate", map[string]any{"url": base + "/"})
-		for i := 0; ; i++ {
-			var ready string
-			c.eval(session, "document.readyState", &ready)
-			if ready == "complete" {
-				return
-			}
-			if i > 100 {
-				t.Fatal("dashboard did not load")
-			}
-			time.Sleep(50 * time.Millisecond)
-		}
-	}
-	// settled loads the dashboard and returns the icon URL once it has
-	// kept the same value for a while: it can change once more after load
-	// when the uploaded logo finishes loading.
-	settled := func() string {
-		navigate()
-		var last string
-		for i, stable := 0, 0; stable < 3; i++ {
-			var href string
-			c.eval(session, "document.querySelector('link[rel=icon]').getAttribute('href')", &href)
-			if href == last {
-				stable++
-			} else {
-				stable, last = 0, href
-			}
-			if i > 100 {
-				t.Fatal("the icon did not settle")
-			}
-			time.Sleep(100 * time.Millisecond)
-		}
-		return last
+		waitFor(t, c, session, "document.readyState === 'complete' && !window.probeOld", "the dashboard to load")
+		var href string
+		c.eval(session, "document.querySelector('link[rel=icon]').getAttribute('href')", &href)
+		return href
 	}
 	// The theme is chosen by the page script from localStorage, so it is
 	// set on the origin first and the dashboard loaded again.
-	navigate()
+	load()
 	var ok bool
 	c.eval(session, "(localStorage.setItem('theme', "+strconv.Quote(theme)+"), true)", &ok)
-	first := settled()
+	first := load()
 	// Safari keeps one icon per page URL and fetches only an icon URL it
-	// has not cached, so the URL must differ on every load or the tab keeps
-	// the color of the first visit.
-	if second := settled(); second == first {
-		t.Fatalf("the icon URL is the same on two loads: %.64s", first)
+	// has not cached, so the URL must be new on every load.
+	if second := load(); second == first {
+		t.Fatalf("the icon URL is the same on two loads: %s", first)
 	}
-	pts, _ := json.Marshal(points)
-	var p faviconProbe
-	c.eval(session, faviconProbeJS+"("+string(pts)+")", &p)
+	return c, session
+}
+
+// iconPixels reads the tab icon of the open page at the points.
+func iconPixels(t *testing.T, c *chrome, session string, points ...[2]int) iconProbe {
+	t.Helper()
+	pts, err := json.Marshal(points)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p iconProbe
+	c.eval(session, iconProbeJS+"("+string(pts)+")", &p)
 	if p.Error != "" {
 		t.Fatalf("%s (href %q)", p.Error, p.Href)
 	}
 	return p
 }
 
-// rgb parses "rgb(1, 2, 3)" as reported by getComputedStyle.
-func rgb(t *testing.T, s string) [3]int {
+// hexRGB parses a "#RRGGBB" color.
+func hexRGB(t *testing.T, s string) [3]int {
 	t.Helper()
-	s = strings.TrimSuffix(strings.TrimPrefix(s, "rgb("), ")")
-	var out [3]int
-	parts := strings.Split(s, ",")
-	if len(parts) != 3 {
-		t.Fatalf("not an rgb() color: %q", s)
+	v, err := strconv.ParseUint(strings.TrimPrefix(s, "#"), 16, 32)
+	if err != nil || len(s) != 7 {
+		t.Fatalf("not a hex color: %q", s)
 	}
-	for i, p := range parts {
-		n, err := strconv.Atoi(strings.TrimSpace(p))
-		if err != nil {
-			t.Fatalf("not an rgb() color: %q", s)
-		}
-		out[i] = n
-	}
-	return out
+	return [3]int{int(v >> 16), int(v >> 8 & 0xFF), int(v & 0xFF)}
 }
 
-// near reports whether a pixel matches a color within a small tolerance.
+// near reports whether a pixel is opaque and matches a color within a
+// small tolerance.
 func near(px [4]int, c [3]int) bool {
 	for i := range c {
-		d := px[i] - c[i]
-		if d < -3 || d > 3 {
+		if d := px[i] - c[i]; d < -3 || d > 3 {
 			return false
 		}
 	}
 	return px[3] == 255
 }
 
-// downServer is a running server with one monitor up and, when down is
-// true, one more that is down.
-func downServer(t *testing.T, down bool) (*Server, *store.Store) {
+// bluePNG is a square blue logo.
+func bluePNG(t *testing.T) []byte {
+	t.Helper()
+	img := image.NewNRGBA(image.Rect(0, 0, 8, 8))
+	for i := 0; i < len(img.Pix); i += 4 {
+		img.Pix[i], img.Pix[i+1], img.Pix[i+2], img.Pix[i+3] = 0x1E, 0x40, 0xAF, 255
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// dashboardServer is a running server with one monitor that is up and,
+// when down is true, one more that is down. It returns the id of the
+// monitor that is up. Both point at a closed port, so a real check fails.
+func dashboardServer(t *testing.T, down bool) (*Server, *store.Store, int64) {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	st, err := store.Open(context.Background(), t.TempDir())
@@ -342,11 +362,13 @@ func downServer(t *testing.T, down bool) (*Server, *store.Store) {
 	if down {
 		names = append(names, "Bravo")
 	}
+	var ids []int64
 	for i, name := range names {
 		m := &store.Monitor{Name: name, Type: store.TypeTCP, Target: "127.0.0.1:1", IntervalS: 900}
 		if err := st.CreateMonitor(ctx, m); err != nil {
 			t.Fatal(err)
 		}
+		ids = append(ids, m.ID)
 		for _, age := range []time.Duration{time.Minute, 2 * time.Minute} {
 			c := store.Check{MonitorID: m.ID, At: now.Add(-age), OK: i == 0, LatencyMS: 12}
 			if i > 0 {
@@ -366,109 +388,104 @@ func downServer(t *testing.T, down bool) (*Server, *store.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return s, st
+	return s, st, ids[0]
 }
 
 // TestFaviconPixels renders the dashboard in headless Chrome and reads the
-// pixels of the tab icon. The built-in mark must carry the status color in
-// its banner in both themes. An uploaded logo must get a red dot in the
-// bottom right corner while a monitor is down and stay untouched while all
-// are up.
+// pixels of the tab icon: for the built-in logo in both themes, for a PNG
+// and an SVG logo, in both states and after a live change of state.
 func TestFaviconPixels(t *testing.T) {
-	chrome := chromePath()
-	if chrome == "" {
+	path := chromePath()
+	if path == "" {
 		t.Skip("no Chrome or Chromium found; set VEXIL_CHROME")
 	}
-	// The banner of the built-in mark fills x 89..423 and y 110..444 of a
-	// 512 unit box: its centre is (32, 34) on a 64 pixel canvas. The dot on
-	// an uploaded logo has its centre at 64 - 64/5.
-	banner := [2]int{32, 34}
-	dot := [2]int{51, 51}
-	corner := [2]int{12, 12}
-
-	t.Run("builtin", func(t *testing.T) {
-		for _, tc := range []struct {
-			name  string
-			down  bool
-			theme string
-		}{
-			{"down light", true, "light"},
-			{"down dark", true, "dark"},
-			{"up light", false, "light"},
-			{"up dark", false, "dark"},
-		} {
-			t.Run(tc.name, func(t *testing.T) {
-				s, st := downServer(t, tc.down)
-				ts, _ := browserFixture(t, s, st)
-				p := probeFavicon(t, chrome, ts.URL, tc.theme, banner)
-				if p.Theme != tc.theme {
-					t.Fatalf("page theme = %q, want %q", p.Theme, tc.theme)
-				}
-				wantTitle, want := "Dashboard · "+brand.Default.Name, rgb(t, p.Up)
-				if tc.down {
-					wantTitle, want = "(1) Dashboard · "+brand.Default.Name, rgb(t, p.Down)
-				}
-				if p.Title != wantTitle {
-					t.Errorf("title = %q, want %q", p.Title, wantTitle)
-				}
-				if !strings.HasPrefix(p.Href, "data:image/svg+xml,") || p.Custom {
-					t.Errorf("icon href = %q custom=%v, want an SVG data URL", p.Href, p.Custom)
-				}
-				if !near(p.Pixels[0], want) {
-					t.Errorf("banner pixel = %v, want %v (--down %s, --up %s)", p.Pixels[0], want, p.Down, p.Up)
-				}
-			})
-		}
-	})
-
-	t.Run("custom logo", func(t *testing.T) {
-		for _, tc := range []struct {
-			name  string
-			down  bool
-			theme string
-		}{
-			{"down light", true, "light"},
-			{"down dark", true, "dark"},
-			{"up light", false, "light"},
-		} {
-			t.Run(tc.name, func(t *testing.T) {
-				s, st := downServer(t, tc.down)
-				ts, c := browserFixture(t, s, st)
-				logo := []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8" fill="#1E40AF"/></svg>`)
-				if res := postMultipart(t, c, ts.URL+"/settings", map[string]string{"name": "Acme", "accent": "#4F46E5"}, logo); res.StatusCode != http.StatusOK {
+	up, down, blue := hexRGB(t, brand.UpColor), hexRGB(t, brand.DownColor), [3]int{0x1E, 0x40, 0xAF}
+	// Points on the 64 pixel icon: the banner of the mark, the middle of a
+	// logo and the red dot on a PNG logo.
+	banner, middle, dot := [2]int{32, 34}, [2]int{32, 32}, [2]int{51, 51}
+	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8" fill="#1E40AF"/></svg>`)
+	type pixel struct {
+		at   [2]int
+		want [3]int
+	}
+	tests := []struct {
+		name   string
+		logo   []byte // nil for the built-in logo
+		down   bool
+		theme  string
+		pixels []pixel
+	}{
+		{"mark down light", nil, true, "light", []pixel{{banner, down}}},
+		{"mark down dark", nil, true, "dark", []pixel{{banner, down}}},
+		{"mark up light", nil, false, "light", []pixel{{banner, up}}},
+		{"mark up dark", nil, false, "dark", []pixel{{banner, up}}},
+		{"png logo down", bluePNG(t), true, "light", []pixel{{middle, blue}, {dot, down}}},
+		{"png logo up", bluePNG(t), false, "light", []pixel{{middle, blue}, {dot, blue}}},
+		{"svg logo down", svg, true, "light", []pixel{{banner, down}}},
+		{"svg logo up", svg, false, "light", []pixel{{middle, blue}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s, st, _ := dashboardServer(t, tc.down)
+			ts, c := browserFixture(t, s, st)
+			if tc.logo != nil {
+				if res := postMultipart(t, c, ts.URL+"/settings", map[string]string{"name": "Acme", "accent": "#4F46E5"}, tc.logo); res.StatusCode != http.StatusOK {
 					t.Fatalf("upload = %d", res.StatusCode)
 				}
-				logoURL := s.currentBrand().LogoURL
-				p := probeFavicon(t, chrome, ts.URL, tc.theme, dot, corner)
-				if !p.Custom {
-					t.Fatalf("icon is not the uploaded logo: %q", p.Href)
+			}
+			b := s.currentBrand()
+			wantHref, wantTitle := b.FaviconUpURL, "Dashboard · "+b.Name
+			if tc.down {
+				wantHref, wantTitle = b.FaviconDownURL, "(1) "+wantTitle
+			}
+			page, session := openDashboard(t, path, ts.URL, tc.theme)
+			var points [][2]int
+			for _, px := range tc.pixels {
+				points = append(points, px.at)
+			}
+			p := iconPixels(t, page, session, points...)
+			if p.Theme != tc.theme {
+				t.Fatalf("page theme = %q, want %q", p.Theme, tc.theme)
+			}
+			if p.Title != wantTitle {
+				t.Errorf("title = %q, want %q", p.Title, wantTitle)
+			}
+			if !strings.HasPrefix(p.Href, wantHref+"#") {
+				t.Errorf("icon href = %q, want %q with a fragment", p.Href, wantHref)
+			}
+			for i, px := range tc.pixels {
+				if !near(p.Pixels[i], px.want) {
+					t.Errorf("pixel at %v = %v, want %v", px.at, p.Pixels[i], px.want)
 				}
-				blue := [3]int{0x1E, 0x40, 0xAF}
-				if !near(p.Pixels[1], blue) {
-					t.Errorf("logo pixel = %v, want %v", p.Pixels[1], blue)
-				}
-				if !tc.down {
-					if p.Title != "Dashboard · Acme" {
-						t.Errorf("title = %q", p.Title)
-					}
-					if !strings.HasPrefix(p.Href, logoURL+"#") {
-						t.Errorf("icon href = %q, want the plain logo %q", p.Href, logoURL)
-					}
-					if !near(p.Pixels[0], blue) {
-						t.Errorf("corner pixel = %v, want the plain logo %v", p.Pixels[0], blue)
-					}
-					return
-				}
-				if p.Title != "(1) Dashboard · Acme" {
-					t.Errorf("title = %q, want %q", p.Title, "(1) Dashboard · Acme")
-				}
-				if !strings.HasPrefix(p.Href, "data:image/png") {
-					t.Errorf("icon href = %q, want a PNG data URL", p.Href)
-				}
-				if want := rgb(t, p.Down); !near(p.Pixels[0], want) {
-					t.Errorf("dot pixel = %v, want %v (--down %s)", p.Pixels[0], want, p.Down)
-				}
-			})
+			}
+		})
+	}
+
+	t.Run("live change", func(t *testing.T) {
+		s, st, alpha := dashboardServer(t, false)
+		ts, _ := browserFixture(t, s, st)
+		page, session := openDashboard(t, path, ts.URL, "light")
+		row := `document.querySelector('.mon-row[data-id="` + strconv.FormatInt(alpha, 10) + `"] .mon-checked')`
+		var at string
+		page.eval(session, "String("+row+".dataset.at)", &at)
+		// The first failed check proves that events reach the page. The
+		// second one turns the monitor down.
+		ctx := context.Background()
+		if _, err := s.engine.CheckNow(ctx, alpha); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, page, session, "String("+row+".dataset.at) !== "+strconv.Quote(at), "the check event")
+		if _, err := s.engine.CheckNow(ctx, alpha); err != nil {
+			t.Fatal(err)
+		}
+		b := s.currentBrand()
+		waitFor(t, page, session, "document.querySelector('link[rel=icon]').getAttribute('href').indexOf("+strconv.Quote(b.FaviconDownURL+"#")+") === 0", "the down icon")
+		p := iconPixels(t, page, session, banner)
+		if !near(p.Pixels[0], down) {
+			t.Errorf("banner pixel = %v, want %v", p.Pixels[0], down)
+		}
+		if want := "(1) Dashboard · " + b.Name; p.Title != want {
+			t.Errorf("title = %q, want %q", p.Title, want)
 		}
 	})
 }

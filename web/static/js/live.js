@@ -10,81 +10,23 @@
   var list = document.getElementById("monitors");
   var lastLine = document.getElementById("last-line");
   var baseTitle = document.title.replace(/^\(\d+\) /, "");
-  var icon = document.querySelector("link[rel=icon]");
-  // The URL of an uploaded logo, "" when the built-in icon is in use.
-  var logo = icon && icon.hasAttribute("data-custom") ? icon.getAttribute("href") : "";
-  // The uploaded logo is drawn from the header image, which is already on
-  // the page: no second request, and it is usually loaded by the time this
-  // script runs.
-  var logoImage = logo ? document.querySelector("img.brand-logo") : null;
-  if (logo && !logoImage) {
-    logoImage = new Image();
-    logoImage.src = logo;
-  }
-  if (logoImage && !logoImage.complete) logoImage.addEventListener("load", setIcon);
-  var down = 0;
+  // The server links the tab icon for the state at load and names the
+  // icons for both states.
+  var icon = document.querySelector("link[rel=icon][data-down]");
+  var down = +body.dataset.down || 0;
 
   // --- Tab title and favicon ---
 
-  function token(name) {
-    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  }
-
-  // favicon returns the built-in logo from the page header with the banner
-  // filled in the status color, as an SVG data URL.
-  function favicon(color) {
-    var mark = document.querySelector("svg.brand-logo");
-    if (!mark) return "";
-    var svg = mark.cloneNode(true);
-    svg.removeAttribute("class");
-    svg.querySelector("[fill^='var(']").setAttribute("fill", color);
-    return "data:image/svg+xml," + encodeURIComponent(svg.outerHTML);
-  }
-
-  // markedLogo returns the uploaded logo with a red dot in the bottom right
-  // corner as a PNG data URL, or "" until the logo has loaded.
-  function markedLogo() {
-    if (!logoImage.complete) return "";
-    var size = 64;
-    var canvas = document.createElement("canvas");
-    canvas.width = canvas.height = size;
-    var ctx = canvas.getContext("2d");
-    // An SVG without a size reports no natural size. Fill the square then.
-    var iw = logoImage.naturalWidth || size, ih = logoImage.naturalHeight || size;
-    var scale = Math.min(size / iw, size / ih);
-    var w = iw * scale, h = ih * scale;
-    var r = size / 5;
-    try {
-      ctx.drawImage(logoImage, (size - w) / 2, (size - h) / 2, w, h);
-      ctx.beginPath();
-      ctx.arc(size - r, size - r, r, 0, 2 * Math.PI);
-      ctx.fillStyle = token("--down");
-      ctx.fill();
-      ctx.lineWidth = size / 32;
-      ctx.strokeStyle = token("--bg");
-      ctx.stroke();
-      return canvas.toDataURL("image/png");
-    } catch (e) {
-      return "";
-    }
-  }
-
-  // setIcon sets the tab icon for the current state. The fragment makes
-  // the URL new on every call: Safari keeps one icon per page URL and only
-  // fetches an icon URL it has not cached, so without it the tab keeps the
-  // color of the first visit. The fragment does not change the image.
-  function setIcon() {
-    if (!icon) return;
-    var href = logo ? (down > 0 && markedLogo()) || logo : favicon(token(down > 0 ? "--down" : "--up"));
-    if (href) icon.setAttribute("href", href + "#" + Date.now());
-  }
-
+  // setDown sets the title and swaps the icon when the page turns up or
+  // down. The fragment makes the URL new on every swap: Safari fetches only
+  // an icon URL it has not cached.
   function setDown(n) {
+    if (icon && (n > 0) !== (down > 0)) {
+      icon.setAttribute("href", icon.getAttribute(n > 0 ? "data-down" : "data-up") + "#" + Date.now());
+    }
     down = n;
     document.title = (n > 0 ? "(" + n + ") " : "") + baseTitle;
-    setIcon();
   }
-  setDown(+body.dataset.down || 0);
 
   // --- "Checked 12 s ago" lines. The text must match ago() in Go. ---
 

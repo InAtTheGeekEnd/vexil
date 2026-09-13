@@ -154,7 +154,7 @@ func TestSettingsLogo(t *testing.T) {
 		t.Fatalf("logo url = %q", logoURL)
 	}
 	// The logo appears only as an <img> and as the icon, never inline.
-	if !strings.Contains(b, `<img class="brand-logo" src="`+logoURL+`"`) || !strings.Contains(b, `<link rel="icon" href="`+logoURL+`" data-custom>`) {
+	if !strings.Contains(b, `<img class="brand-logo" src="`+logoURL+`"`) || !strings.Contains(b, `<link rel="icon" href="`+logoURL+`">`) {
 		t.Fatalf("page does not reference the logo through img and icon: %s", b[:600])
 	}
 	if strings.Contains(b, "alert(1)") {
@@ -334,4 +334,53 @@ func pngLogo(t *testing.T) []byte {
 		t.Fatal(err)
 	}
 	return buf.Bytes()
+}
+
+func TestFaviconRoutes(t *testing.T) {
+	s, st := newIdleServer(t, Options{})
+	ts, c := loggedIn(t, s, st)
+	check := func(u string) {
+		t.Helper()
+		if !strings.HasPrefix(u, "/brand/favicon-") {
+			t.Fatalf("favicon url = %q", u)
+		}
+		res := get(t, c, ts.URL+u)
+		if res.StatusCode != http.StatusOK || res.Header.Get("Content-Type") != "image/svg+xml" {
+			t.Fatalf("%s: %d %q", u, res.StatusCode, res.Header.Get("Content-Type"))
+		}
+		if res.Header.Get("Cache-Control") != "public, max-age=31536000, immutable" {
+			t.Fatalf("%s: cache = %q", u, res.Header.Get("Cache-Control"))
+		}
+		if b := body(t, res); !strings.HasPrefix(b, "<svg ") {
+			t.Fatalf("%s: body = %.40q", u, b)
+		}
+	}
+	b := s.currentBrand()
+	check(b.FaviconUpURL)
+	check(b.FaviconDownURL)
+
+	// The dashboard links the icon for its state and names both. The
+	// settings page has no live updates and keeps the plain mark.
+	link := `<link rel="icon" href="` + b.FaviconUpURL + `#`
+	names := `data-up="` + b.FaviconUpURL + `" data-down="` + b.FaviconDownURL + `"`
+	if page := body(t, get(t, c, ts.URL+"/")); !strings.Contains(page, link) || !strings.Contains(page, names) {
+		t.Fatalf("dashboard lacks %q or %q", link, names)
+	}
+	if page := body(t, get(t, c, ts.URL+"/settings")); !strings.Contains(page, `<link rel="icon" href="/static/brand/logo.svg?v=`) {
+		t.Fatal("settings page lacks the plain icon")
+	}
+
+	// An SVG logo is its own up icon. A PNG logo gets a drawn one again.
+	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10"/></svg>`)
+	postMultipart(t, c, ts.URL+"/settings", map[string]string{"name": "Acme", "accent": "#4F46E5"}, svg)
+	b = s.currentBrand()
+	if b.FaviconUpURL != b.LogoURL {
+		t.Fatalf("up icon with an svg logo = %q, want the logo %q", b.FaviconUpURL, b.LogoURL)
+	}
+	check(b.FaviconDownURL)
+	if res := get(t, c, ts.URL+"/brand/favicon-up.svg"); res.StatusCode != http.StatusNotFound {
+		t.Fatalf("drawn up icon with an svg logo = %d", res.StatusCode)
+	}
+	postMultipart(t, c, ts.URL+"/settings", map[string]string{"name": "Acme", "accent": "#4F46E5"}, pngLogo(t))
+	check(s.currentBrand().FaviconUpURL)
 }

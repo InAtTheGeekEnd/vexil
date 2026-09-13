@@ -24,6 +24,11 @@ type brandState struct {
 	// versioned URL. Both are rebuilt when the brand changes.
 	TouchIcon    []byte
 	TouchIconURL string
+	// FaviconUp and FaviconDown are the SVG tab icons for all up and for
+	// one or more down, with their versioned URLs. An SVG logo is its own
+	// up icon.
+	FaviconUp, FaviconDown       []byte
+	FaviconUpURL, FaviconDownURL string
 }
 
 var brandKeys = []string{
@@ -65,6 +70,14 @@ func (s *Server) setBrand(b brand.Brand) {
 		st.TouchIcon = icon
 		st.TouchIconURL = "/brand/apple-touch-icon.png?v=" + shortHash(icon)
 	}
+	st.FaviconDown = brand.Favicon(b, builtinLogo(), true)
+	st.FaviconDownURL = "/brand/favicon-down.svg?v=" + shortHash(st.FaviconDown)
+	if b.Logo.Type == "image/svg+xml" {
+		st.FaviconUpURL = st.LogoURL
+	} else {
+		st.FaviconUp = brand.Favicon(b, builtinLogo(), false)
+		st.FaviconUpURL = "/brand/favicon-up.svg?v=" + shortHash(st.FaviconUp)
+	}
 	s.brand.Store(st)
 }
 
@@ -77,19 +90,39 @@ func shortHash(data []byte) string {
 // handleTouchIcon serves the iOS home screen icon.
 func (s *Server) handleTouchIcon(w http.ResponseWriter, r *http.Request) {
 	b := s.currentBrand()
-	if b.TouchIcon == nil {
+	serveBrandFile(w, r, b.TouchIcon, b.TouchIconURL, "image/png")
+}
+
+// handleFaviconUp serves the tab icon for all up.
+func (s *Server) handleFaviconUp(w http.ResponseWriter, r *http.Request) {
+	b := s.currentBrand()
+	serveBrandFile(w, r, b.FaviconUp, b.FaviconUpURL, "image/svg+xml")
+}
+
+// handleFaviconDown serves the tab icon for one or more down.
+func (s *Server) handleFaviconDown(w http.ResponseWriter, r *http.Request) {
+	b := s.currentBrand()
+	serveBrandFile(w, r, b.FaviconDown, b.FaviconDownURL, "image/svg+xml")
+}
+
+// serveBrandFile serves a file built from the brand. A request for its
+// current versioned URL may be cached for a year. The policy header lets
+// an SVG opened on its own load nothing but data URLs.
+func serveBrandFile(w http.ResponseWriter, r *http.Request, data []byte, versioned, contentType string) {
+	if data == nil {
 		http.NotFound(w, r)
 		return
 	}
 	h := w.Header()
-	h.Set("Content-Type", "image/png")
+	h.Set("Content-Type", contentType)
+	h.Set("Content-Security-Policy", "default-src 'none'; img-src data:")
 	h.Set("X-Content-Type-Options", "nosniff")
-	if r.URL.Query().Get("v") == strings.TrimPrefix(b.TouchIconURL, "/brand/apple-touch-icon.png?v=") {
+	if r.URL.Path+"?v="+r.URL.Query().Get("v") == versioned {
 		h.Set("Cache-Control", "public, max-age=31536000, immutable")
 	} else {
 		h.Set("Cache-Control", "no-cache")
 	}
-	_, _ = w.Write(b.TouchIcon)
+	_, _ = w.Write(data)
 }
 
 // currentBrand returns the brand in use.
