@@ -254,6 +254,7 @@ vexil.example.com {
 ```
 
 Settings has the brand: the name, the logo, the accent color and the "Powered by" line.
+An uploaded SVG logo does not appear on the iOS home screen icon. Upload a PNG if you want your own logo there.
 
 ### Backup
 
