@@ -27,9 +27,14 @@ type Brand struct {
 	Logo Logo
 }
 
+// ProductName is the name of the product and of its binary. Unlike the
+// brand name, it does not change with the white label, so help that names
+// the binary uses it.
+const ProductName = "vexil"
+
 // Default is the built-in brand.
 var Default = Brand{
-	Name:      "vexil",
+	Name:      ProductName,
 	Accent:    "#4F46E5",
 	PoweredBy: true,
 }
