@@ -9,9 +9,16 @@ import (
 // MinPasswordLen is the minimum admin password length.
 const MinPasswordLen = 10
 
-// ErrPasswordShort and ErrPasswordMismatch describe invalid new passwords.
+// MaxPasswordBytes is the longest password that bcrypt takes.
+const MaxPasswordBytes = 72
+
+// ErrPasswordShort, ErrPasswordLong and ErrPasswordMismatch describe invalid
+// new passwords.
 var (
-	ErrPasswordShort    = errors.New("the password must have at least 10 characters")
+	ErrPasswordShort = errors.New("the password must have at least 10 characters")
+	// The limit counts bytes, as bcrypt does. An accented letter takes two,
+	// so the message gives no number.
+	ErrPasswordLong     = errors.New("that password is too long. Use a shorter one")
 	ErrPasswordMismatch = errors.New("the two passwords do not match")
 )
 
@@ -19,6 +26,9 @@ var (
 func ValidateNewPassword(password, confirm string) error {
 	if len(password) < MinPasswordLen {
 		return ErrPasswordShort
+	}
+	if len(password) > MaxPasswordBytes {
+		return ErrPasswordLong
 	}
 	if password != confirm {
 		return ErrPasswordMismatch

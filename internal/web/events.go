@@ -42,6 +42,9 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rc := http.NewResponseController(w)
+	// The WriteTimeout of the server would end the stream. The stream lasts
+	// as long as the client stays.
+	_ = rc.SetWriteDeadline(time.Time{})
 	events, unsubscribe := s.engine.Hub().Subscribe(64)
 	defer unsubscribe()
 
@@ -66,10 +69,22 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		case <-s.closing:
 			return
 		case <-heartbeat.C:
+			// A session can end while its stream is open: a logout, a
+			// password change or the expiry. The stream ends with it, and
+			// the reconnect gets 401.
+			if ok, err := s.loggedIn(r); err != nil || !ok {
+				return
+			}
 			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
 				return
 			}
-		case ev := <-events:
+		case ev, ok := <-events:
+			if !ok {
+				// The hub dropped this stream because it fell behind, so the
+				// page has missed events. The browser reconnects, and live.js
+				// loads the page again.
+				return
+			}
 			if err := s.writeEvent(r.Context(), w, ev); err != nil {
 				return
 			}

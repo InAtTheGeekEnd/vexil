@@ -259,7 +259,24 @@ An uploaded SVG logo does not appear on the iOS home screen icon. Upload a PNG i
 
 ### Backup
 
-Copy the data folder. It holds everything. Raw check results are kept for 30 days. A daily summary per monitor is kept forever.
+Run the backup command. It writes one consistent copy of the database to a new file, and it works while vexil runs. It does not overwrite a file.
+
+```
+vexil backup /var/backups/vexil-backup.db
+```
+
+Docker:
+
+```
+docker exec vexil vexil backup /data/backup.db
+docker cp vexil:/data/backup.db ./vexil-backup.db
+```
+
+Copy the backup file off the server. Do not copy the live data folder: the database runs in WAL mode, and a copy of the files while vexil writes can be broken.
+
+To restore, stop vexil, delete `vexil.db`, `vexil.db-wal` and `vexil.db-shm` from the data folder, and put the backup file there as `vexil.db`.
+
+The database holds everything. Raw check results are kept for 30 days. A daily summary per monitor is kept forever.
 
 ### Forgot your password?
 
@@ -267,6 +284,12 @@ Run this on the server. It works while vexil runs and logs out every browser.
 
 ```
 vexil reset-password
+```
+
+Docker:
+
+```
+docker exec -it vexil vexil reset-password
 ```
 
 ## Development

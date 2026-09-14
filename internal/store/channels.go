@@ -108,6 +108,14 @@ func (s *Store) SetChannelError(ctx context.Context, id int64, msg string, at ti
 	return affected(res)
 }
 
+// ClearChannelError removes the stored delivery error of a channel, if it
+// has one.
+func (s *Store) ClearChannelError(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE channels SET last_error = NULL, last_error_at = NULL WHERE id = ? AND last_error IS NOT NULL`, id)
+	return err
+}
+
 // DeleteChannel removes a channel.
 func (s *Store) DeleteChannel(ctx context.Context, id int64) error {
 	res, err := s.db.ExecContext(ctx, `DELETE FROM channels WHERE id = ?`, id)

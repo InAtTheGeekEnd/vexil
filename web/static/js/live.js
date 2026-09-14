@@ -76,6 +76,10 @@
 
   function onState(ev) {
     setDown(ev.down);
+    if (ev.state === "deleted") {
+      onDeleted(ev);
+      return;
+    }
     if (lastLine && +lastLine.dataset.monitor === ev.id) {
       // The tiles, the chart and the incident list all change with the
       // state. A fresh page is simpler than patching each one.
@@ -110,6 +114,27 @@
     } else if (old === "down") {
       delete row.dataset.since;
       goHome(row);
+    }
+    slide(before);
+    headline();
+  }
+
+  // onDeleted takes a deleted monitor off the page. The detail page of that
+  // monitor goes to the dashboard.
+  function onDeleted(ev) {
+    if (lastLine && +lastLine.dataset.monitor === ev.id) {
+      location.replace("/");
+      return;
+    }
+    if (!dash) return;
+    var row = dash.querySelector('.mon-row[data-id="' + ev.id + '"]');
+    if (!row) return;
+    var before = positions();
+    row.remove();
+    if (!dash.querySelector(".mon-row")) {
+      // The last monitor is gone: the server page shows the empty state.
+      reloadWhenVisible();
+      return;
     }
     slide(before);
     headline();
@@ -207,6 +232,33 @@
     }
   }
 
+  // --- Stale state ---
+
+  // setStale marks the page while it has no event stream: the session ended
+  // or the server is gone, so the data on the page is old. The dots turn
+  // gray, their pulse stops and one line says so.
+  var staleLine = null;
+
+  function setStale(on) {
+    body.classList.toggle("stale", on);
+    if (!on) {
+      if (staleLine) staleLine.remove();
+      staleLine = null;
+      return;
+    }
+    var main = document.querySelector("main");
+    if (staleLine || !main) return;
+    staleLine = document.createElement("p");
+    staleLine.className = "alert stale-line";
+    staleLine.setAttribute("role", "status");
+    staleLine.appendChild(document.createTextNode("The connection is lost. The data on this page is old."));
+    var link = document.createElement("a");
+    link.href = "/login";
+    link.textContent = "Log in again";
+    staleLine.appendChild(link);
+    main.insertBefore(staleLine, main.firstChild);
+  }
+
   // --- Connection ---
 
   var source = null;
@@ -228,6 +280,7 @@
     source = new EventSource("/events");
     source.addEventListener("open", function () {
       delay = 5000;
+      setStale(false);
       // A reconnect means events were missed. Load the page again.
       if (connected) reloadWhenVisible();
       connected = true;
@@ -235,8 +288,11 @@
     source.addEventListener("check", function (e) { onCheck(JSON.parse(e.data)); });
     source.addEventListener("state", function (e) { onState(JSON.parse(e.data)); });
     source.addEventListener("error", function () {
+      // No events arrive from now on, so the page shows old data.
+      setStale(true);
       // The browser retries a dropped connection by itself. It gives up
-      // after an error response, so retry with a growing delay.
+      // after an error response, such as 401 when the session ended, so
+      // retry with a growing delay.
       if (source.readyState !== EventSource.CLOSED) return;
       source = null;
       setTimeout(connect, delay);

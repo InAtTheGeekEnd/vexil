@@ -13,9 +13,12 @@ import (
 	"github.com/InAtTheGeekEnd/vexil/internal/store"
 )
 
+// ShutdownBudget is the most that a whole shutdown may take, so it ends
+// before Docker stops waiting after 10 seconds (SPEC.md section 6.3).
+const ShutdownBudget = 8 * time.Second
+
 const (
 	maxConcurrent  = 50
-	shutdownWait   = 10 * time.Second
 	certWarnBefore = 14 * 24 * time.Hour
 
 	// Timing from SPEC.md sections 4.4, 5.5 and 6.3. Tests shorten these
@@ -28,6 +31,12 @@ const (
 // Notifier receives alerts: DOWN, UP and certificate warnings.
 type Notifier interface {
 	Notify(ctx context.Context, ev Event)
+}
+
+// deliveryWaiter is a Notifier that can wait for its deliveries in progress.
+// Stop gives it what is left of the shutdown budget.
+type deliveryWaiter interface {
+	WaitUntil(deadline time.Time) bool
 }
 
 type noopNotifier struct{}
@@ -64,11 +73,17 @@ type Engine struct {
 	retryDelay   time.Duration
 	maxOffset    time.Duration
 	pushMinExtra time.Duration
+	stopWait     time.Duration // the budget of Stop
 
-	sem     chan struct{}
-	results chan result
-	stopCh  chan struct{}
-	done    chan struct{}
+	sem      chan struct{}
+	results  chan result
+	stopping chan struct{} // closed by Stop: runners start no new check
+	stopCh   chan struct{}
+	done     chan struct{}
+
+	reloadMu sync.Mutex     // one Reload at a time
+	writeMu  sync.Mutex     // the writer and DeleteMonitor take turns
+	notifyWG sync.WaitGroup // notifier calls in progress
 
 	mu      sync.Mutex
 	baseCtx context.Context
@@ -93,8 +108,10 @@ func New(st *store.Store, opts Options) *Engine {
 		retryDelay:   defaultRetryDelay,
 		maxOffset:    defaultMaxOffset,
 		pushMinExtra: defaultPushMinExtra,
+		stopWait:     ShutdownBudget,
 		sem:          make(chan struct{}, maxConcurrent),
 		results:      make(chan result, 256),
+		stopping:     make(chan struct{}),
 		stopCh:       make(chan struct{}),
 		done:         make(chan struct{}),
 		runners:      make(map[int64]*runner),
@@ -144,7 +161,7 @@ func (e *Engine) Start(ctx context.Context) error {
 		}
 		e.status[m.ID] = st
 		if !m.Paused {
-			e.startRunnerLocked(m)
+			e.startRunnerLocked(m, false)
 		}
 	}
 	e.started = true
@@ -153,38 +170,91 @@ func (e *Engine) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop cancels the tickers, waits for running checks (at most 10 seconds)
-// and flushes the writer.
+// Stop stops the engine within its budget, ShutdownBudget unless a test sets
+// another. See StopBy.
 func (e *Engine) Stop() {
+	e.StopBy(time.Now().Add(e.stopWait))
+}
+
+// StopBy stops the engine by the deadline (SPEC.md section 6.3). The stages
+// share the deadline and run in order, each with what is left of it: stop the
+// tickers and wait for the running checks, flush the writer, wait for the
+// alert calls, then wait for the deliveries in progress when the notifier can
+// wait for them.
+func (e *Engine) StopBy(deadline time.Time) {
 	e.mu.Lock()
 	if !e.started || e.stopped {
 		e.mu.Unlock()
 		return
 	}
 	e.stopped = true
-	e.cancel()
+	// Stop the schedules, but let a running check end and store its result
+	// (SPEC.md section 6.3). The contexts are cancelled only after the
+	// deadline.
+	close(e.stopping)
 	runners := make([]*runner, 0, len(e.runners))
 	for _, r := range e.runners {
 		runners = append(runners, r)
 	}
 	e.mu.Unlock()
 
-	deadline := time.After(shutdownWait)
+	// Running checks. One timer for all runners: once it fires, Stop waits for
+	// none of them. A timer channel delivers once, so a select on it per
+	// runner would wait without a limit for every runner after the first late
+	// one.
+	timeout := time.NewTimer(time.Until(deadline))
+	defer timeout.Stop()
+wait:
 	for _, r := range runners {
 		select {
 		case <-r.done:
-		case <-deadline:
+		case <-timeout.C:
 			e.log.Warn("engine stop: checks still running after timeout")
+			break wait
 		}
 	}
+	e.cancel()
 	close(e.stopCh)
 	<-e.done
+	// Alert calls. The writer has flushed, so no alert is handed over after
+	// this.
+	if !waitUntil(&e.notifyWG, deadline) {
+		e.log.Warn("engine stop: alerts still being handed over at the end of the shutdown budget")
+	}
+	// Deliveries in progress, so the alerts of the last results go out while
+	// the database is still open.
+	if d, ok := e.notifier.(deliveryWaiter); ok && !d.WaitUntil(deadline) {
+		e.log.Warn("engine stop: alert deliveries still running at the end of the shutdown budget were dropped")
+	}
 	e.log.Info("engine stopped")
+}
+
+// waitUntil waits for wg until the deadline and reports whether wg ended.
+func waitUntil(wg *sync.WaitGroup, deadline time.Time) bool {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	timer := time.NewTimer(time.Until(deadline))
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
 }
 
 // Reload restarts the goroutine of one monitor after an edit, pause,
 // resume or delete. Call it after the store change.
 func (e *Engine) Reload(ctx context.Context, id int64) error {
+	// Two reloads of one monitor must not overlap: both would stop the old
+	// runner and both would start a new one. The store read is inside the
+	// lock, so a reload that read the monitor before a delete cannot start a
+	// runner after the reload that saw the delete.
+	e.reloadMu.Lock()
+	defer e.reloadMu.Unlock()
 	m, err := e.store.Monitor(ctx, id)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return err
@@ -222,12 +292,36 @@ func (e *Engine) Reload(ctx context.Context, id int64) error {
 			st.State, st.Fails = Pending, 0
 		}
 		if e.started && !e.stopped {
-			e.startRunnerLocked(m)
+			e.startRunnerLocked(m, prev == Paused)
 		}
 	}
 	if st.State != prev {
 		e.hub.Publish(Event{MonitorID: id, Prev: prev, State: st.State, At: time.Now()})
 	}
+	return nil
+}
+
+// DeleteMonitor deletes a monitor with its history and forgets its status.
+// It takes turns with the writer: a result that the writer has written goes
+// with the delete, and a result that comes later finds no status and is
+// dropped. A check that was already running can finish after the delete, so
+// the store transaction alone cannot stop that write. Call Reload after it
+// to stop the runner.
+func (e *Engine) DeleteMonitor(ctx context.Context, id int64) error {
+	e.writeMu.Lock()
+	defer e.writeMu.Unlock()
+	if err := e.store.DeleteMonitor(ctx, id); err != nil {
+		return err
+	}
+	e.mu.Lock()
+	prev := Pending
+	if st := e.status[id]; st != nil {
+		prev = st.State
+	}
+	delete(e.status, id)
+	e.mu.Unlock()
+	// Open pages take the monitor off and correct their down count.
+	e.hub.Publish(Event{MonitorID: id, Prev: prev, State: Deleted, At: time.Now()})
 	return nil
 }
 
@@ -313,32 +407,41 @@ func (e *Engine) initialStatus(ctx context.Context, m store.Monitor) (*Status, e
 		return nil, err
 	} else if st.Fails >= failuresBeforeDown {
 		st.State = Down
-	} else {
+	} else if len(recent) > st.Fails {
+		// A success comes before the failures, so the monitor was UP.
 		st.State = Up
 	}
+	// Otherwise the only checks are failures: no check ever succeeded, so
+	// the state stays PENDING.
 	return st, nil
 }
 
 // startRunnerLocked starts the goroutine for m. The caller holds e.mu.
-func (e *Engine) startRunnerLocked(m store.Monitor) {
+// resumed is true when a paused monitor starts again.
+func (e *Engine) startRunnerLocked(m store.Monitor, resumed bool) {
+	// A runner in the map is never replaced while it runs. The caller cannot
+	// wait for it here, as it can need e.mu to end.
+	if old := e.runners[m.ID]; old != nil {
+		old.cancel()
+	}
 	ctx, cancel := context.WithCancel(e.baseCtx)
 	r := &runner{cancel: cancel, done: make(chan struct{})}
 	e.runners[m.ID] = r
-	go e.run(ctx, m, r)
+	go e.run(ctx, m, r, resumed)
 }
 
 // run is the goroutine of one monitor. Each tick says how long to wait for
 // the next one: the interval after a success, retryDelay after a failure.
 // The wait counts from the start of the tick so a slow check does not
 // shift the schedule.
-func (e *Engine) run(ctx context.Context, m store.Monitor, r *runner) {
+func (e *Engine) run(ctx context.Context, m store.Monitor, r *runner, resumed bool) {
 	defer close(r.done)
 
 	interval := e.interval(m)
 	if interval <= 0 {
 		interval = time.Minute
 	}
-	tick := e.tickFunc(m, interval)
+	tick := e.tickFunc(m, interval, resumed)
 	if tick == nil {
 		return
 	}
@@ -350,6 +453,15 @@ func (e *Engine) run(ctx context.Context, m store.Monitor, r *runner) {
 		case <-timer.C:
 		case <-ctx.Done():
 			return
+		case <-e.stopping:
+			return
+		}
+		// The timer and a Stop can be ready at the same moment. A stopping
+		// engine starts no new check.
+		select {
+		case <-e.stopping:
+			return
+		default:
 		}
 		started := time.Now()
 		next := tick(ctx)
@@ -362,8 +474,8 @@ func (e *Engine) run(ctx context.Context, m store.Monitor, r *runner) {
 
 // firstDelay is the wait before the first tick of a runner. It counts from
 // the last check in the status, which Start restores from the database, so
-// a restart does not reset the schedule. A monitor with no check yet gets a
-// random offset of at most maxOffset, or the interval if that is shorter.
+// a restart does not reset the schedule. A monitor with no check yet, or
+// with a check that is overdue, gets a random start offset.
 // A push monitor ticks at once: its tick computes the deadline itself.
 func (e *Engine) firstDelay(m store.Monitor, interval time.Duration) time.Duration {
 	if m.Type == store.TypePush {
@@ -378,17 +490,29 @@ func (e *Engine) firstDelay(m store.Monitor, interval time.Duration) time.Durati
 	}
 	e.mu.Unlock()
 	if last.IsZero() {
-		limit := min(e.maxOffset, interval)
-		if limit <= 0 {
-			return 0
-		}
-		return rand.N(limit)
+		return e.startOffset(interval)
 	}
 	wait := interval
 	if !ok {
 		wait = e.retryDelay
 	}
-	return max(0, time.Until(last.Add(wait)))
+	if d := time.Until(last.Add(wait)); d > 0 {
+		return d
+	}
+	// The check is overdue, as after a downtime longer than the interval.
+	// Without the offset, every overdue monitor would check in the same
+	// second and stay in step after that.
+	return e.startOffset(interval)
+}
+
+// startOffset is a random wait of at most maxOffset, or the interval if that
+// is shorter (SPEC.md section 6.3).
+func (e *Engine) startOffset(interval time.Duration) time.Duration {
+	limit := min(e.maxOffset, interval)
+	if limit <= 0 {
+		return 0
+	}
+	return rand.N(limit)
 }
 
 // pushGrace is how long a push monitor may go without a push: the interval
@@ -398,8 +522,9 @@ func (e *Engine) pushGrace(interval time.Duration) time.Duration {
 }
 
 // tickFunc returns what one tick does for a monitor. The function returns
-// the wait until the next tick.
-func (e *Engine) tickFunc(m store.Monitor, interval time.Duration) func(context.Context) time.Duration {
+// the wait until the next tick. resumed is true when a paused monitor starts
+// again.
+func (e *Engine) tickFunc(m store.Monitor, interval time.Duration, resumed bool) func(context.Context) time.Duration {
 	if m.Type == store.TypePush {
 		grace := e.pushGrace(interval)
 		start := time.Now()
@@ -407,8 +532,11 @@ func (e *Engine) tickFunc(m store.Monitor, interval time.Duration) func(context.
 			now := time.Now()
 			e.mu.Lock()
 			ref := start
-			if st := e.status[m.ID]; st != nil && !st.LastPush.IsZero() {
-				ref = st.LastPush // restored from the database at start
+			// The last push counts, also as restored from the database at
+			// start. After a resume, only a push after the resume counts: no
+			// push was due while the monitor was paused.
+			if st := e.status[m.ID]; st != nil && !st.LastPush.IsZero() && (!resumed || st.LastPush.After(start)) {
+				ref = st.LastPush
 			}
 			e.mu.Unlock()
 			if wait := ref.Add(grace).Sub(now); wait > 0 {
@@ -428,6 +556,8 @@ func (e *Engine) tickFunc(m store.Monitor, interval time.Duration) func(context.
 		select {
 		case e.sem <- struct{}{}:
 		case <-ctx.Done():
+			return 0
+		case <-e.stopping:
 			return 0
 		}
 		defer func() { <-e.sem }()
@@ -474,6 +604,8 @@ func (e *Engine) writer() {
 }
 
 func (e *Engine) handle(r result) {
+	e.writeMu.Lock()
+	defer e.writeMu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -498,6 +630,22 @@ func (e *Engine) handle(r result) {
 	}
 	e.mu.Unlock()
 
+	// A monitor that was DOWN can be paused and resumed, which restarts it
+	// at PENDING while its incident stays open. That incident is still the
+	// same outage: the first success closes it with an UP alert, and new
+	// failures open no second incident and send no second DOWN alert.
+	switch {
+	case alert == AlertNone && ev.State == Up && prev != Up:
+		if e.hasOpenIncident(ctx, r.monitorID) {
+			alert = AlertUp
+		}
+	case alert == AlertDown:
+		if e.hasOpenIncident(ctx, r.monitorID) {
+			alert = AlertNone
+		}
+	}
+	ev.Alert = alert
+
 	if err := e.store.InsertCheck(ctx, store.Check{
 		MonitorID:  r.monitorID,
 		At:         r.at,
@@ -520,7 +668,7 @@ func (e *Engine) handle(r result) {
 	}
 	if alert != AlertNone {
 		e.log.Info("state change", "monitor", r.monitorID, "from", prev, "to", ev.State, "error", r.res.Error)
-		go e.notifier.Notify(context.Background(), ev)
+		e.notify(ev)
 	}
 	if certWarn {
 		// Record it first so a restart does not send the warning again.
@@ -530,9 +678,29 @@ func (e *Engine) handle(r result) {
 		e.log.Info("certificate expires soon", "monitor", r.monitorID, "expiry", r.res.CertExpiry)
 		cert := ev
 		cert.Alert = AlertCert
-		go e.notifier.Notify(context.Background(), cert)
+		e.notify(cert)
 	}
 	e.hub.Publish(ev)
+}
+
+// notify hands an alert to the notifier in its own goroutine, so a slow
+// channel does not hold the writer. Stop waits for these calls.
+func (e *Engine) notify(ev Event) {
+	e.notifyWG.Add(1)
+	go func() {
+		defer e.notifyWG.Done()
+		e.notifier.Notify(context.Background(), ev)
+	}()
+}
+
+// hasOpenIncident reports whether a monitor has an open incident. A read
+// error counts as no incident and is logged.
+func (e *Engine) hasOpenIncident(ctx context.Context, id int64) bool {
+	_, err := e.store.CurrentIncident(ctx, id)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		e.log.Error("read open incident", "monitor", id, "err", err)
+	}
+	return err == nil
 }
 
 // certExpiring reports whether a certificate expires within certWarnBefore

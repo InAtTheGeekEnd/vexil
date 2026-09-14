@@ -101,6 +101,30 @@ func (s *Store) PasswordHash(ctx context.Context) (string, error) {
 	return s.GetSetting(ctx, SettingPasswordHash)
 }
 
+// SetFirstPasswordHash stores the first bcrypt hash and deletes every
+// session, in one transaction. It stores nothing and reports false when a
+// hash exists, so two first-run setups at the same time cannot both set a
+// password.
+func (s *Store) SetFirstPasswordHash(ctx context.Context, hash string) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx,
+		`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING`, SettingPasswordHash, hash)
+	if err != nil {
+		return false, err
+	}
+	if n, err := res.RowsAffected(); err != nil || n == 0 {
+		return false, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions`); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
+}
+
 // SetPasswordHash stores a new bcrypt hash and deletes every session except
 // the one with keepTokenHash. An empty keepTokenHash deletes every session.
 func (s *Store) SetPasswordHash(ctx context.Context, hash, keepTokenHash string) error {

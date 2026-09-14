@@ -195,7 +195,7 @@ vexil sends each alert once. There are no repeat reminders.
 - Checkers send results into one channel. One writer goroutine writes to SQLite. This avoids lock contention.
 - The writer publishes each result to an in-memory event hub. The SSE handler reads from the hub.
 - Changes to a monitor (edit, pause, delete) restart only that monitor's goroutine.
-- Shutdown: on SIGINT or SIGTERM, stop tickers, wait for running checks (maximum 10 seconds), flush the writer, close the database.
+- Shutdown: on SIGINT or SIGTERM, finish within 10 seconds. One budget of 8 seconds covers the stages in order: stop tickers and wait for running checks, flush the writer, wait for the alert calls, then wait for the deliveries in progress. Each stage gets what is left of the budget. Then close the database.
 
 ### 6.4 Checker interface
 
@@ -281,6 +281,7 @@ When the monitor comes back UP, vexil cancels the repeats of its DOWN alert. vex
 
 - Send in a separate goroutine. A slow channel must not block checks.
 - Retry 3 times with backoff (5s, 30s, 2m). Then log the failure and show it on the Notifications page.
+- Retries live in memory. A restart can lose a pending retry.
 
 ---
 
@@ -288,7 +289,7 @@ When the monitor comes back UP, vexil cancels the repeats of its DOWN alert. vex
 
 ```sql
 CREATE TABLE monitors (
-  id          INTEGER PRIMARY KEY,
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,  -- never reused: ids are in badge URLs, alert links and webhook payloads
   name        TEXT NOT NULL,
   type        TEXT NOT NULL,          -- http, tcp, ping, dns, push
   target      TEXT NOT NULL,          -- URL, host, host:port, or hostname
@@ -318,9 +319,10 @@ CREATE TABLE checks (
   ok          INTEGER NOT NULL,
   latency_ms  INTEGER,
   status_code INTEGER,
-  error       TEXT
+  error       TEXT,
+  FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
 );
-CREATE INDEX checks_monitor_at ON checks(monitor_id, at);
+CREATE INDEX checks_monitor_at ON checks(monitor_id, at, ok, latency_ms);  -- covering: stats read ok and latency from the index
 
 CREATE TABLE daily (
   monitor_id  INTEGER NOT NULL,
@@ -328,7 +330,8 @@ CREATE TABLE daily (
   total       INTEGER NOT NULL,
   ok          INTEGER NOT NULL,
   avg_latency INTEGER,
-  PRIMARY KEY (monitor_id, day)
+  PRIMARY KEY (monitor_id, day),
+  FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
 );
 
 CREATE TABLE incidents (
@@ -336,7 +339,8 @@ CREATE TABLE incidents (
   monitor_id  INTEGER NOT NULL,
   started_at  INTEGER NOT NULL,
   ended_at    INTEGER,
-  reason      TEXT
+  reason      TEXT,
+  FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
 );
 
 CREATE TABLE channels (
@@ -362,9 +366,10 @@ CREATE TABLE settings (
 ```
 
 - Use WAL mode.
+- Open every connection with `PRAGMA foreign_keys = ON`, so a deleted monitor takes its checks, daily rows and incidents with it.
 - Migrations: numbered `.sql` files in `internal/store/migrations`, embedded, run at startup.
 - A background job runs every hour. It updates `daily` and deletes `checks` rows older than 30 days.
-- Backup: the user copies the `data` folder. Document this in the README.
+- Backup: the user runs `vexil backup <path>` and copies that file. Copying the live data folder can corrupt the copy, because the database runs in WAL mode.
 
 ---
 
@@ -556,6 +561,7 @@ Settings page, section **Brand**:
 
 - The product name appears in the page titles, the header, emails and notification footers.
 - The code must use the brand setting everywhere. No hard-coded "vexil" in templates or messages. Add a test that searches templates for the literal string.
+- The "Powered by" footer and the `reset-password` help on the login page use the product name, not the brand name. They are the only two exceptions to the no-hard-coded-name rule. The name comes from the brand defaults in code, so the templates still have no literal.
 - The accent color generates a hover shade and a subtle tint automatically.
 
 ---
@@ -566,7 +572,7 @@ Settings page, section **Brand**:
 - Session: random 32-byte token in an `HttpOnly`, `SameSite=Lax` cookie. `Secure` when the request is HTTPS. 30-day lifetime. The database stores only a SHA-256 hash of the token.
 - A password change (in Settings or with `vexil reset-password`) deletes all other sessions.
 - CSRF: use `http.CrossOriginProtection` from the standard library.
-- Login rate limit: 5 attempts per minute per IP.
+- Login rate limit: 5 attempts per minute per IP, and per /64 for IPv6.
 - Push tokens: 24 random bytes, URL-safe base64.
 - Channel secrets are stored in the database. The UI never shows them again after save (show `••••` with a Replace button).
 - Security headers: CSP (self only), `X-Content-Type-Options`, `Referrer-Policy`.
@@ -580,6 +586,7 @@ Settings page, section **Brand**:
 | Binary size | Less than 25 MB |
 | Memory with 100 monitors | Less than 50 MB |
 | Dashboard server response | Less than 50 ms |
+| | Measured: 51 ms with 100 monitors and 30 days of history, default SQLite cache. |
 | Page weight (dashboard, first load) | Less than 200 KB, fonts included |
 | Lighthouse accessibility | 100 |
 
@@ -613,6 +620,7 @@ vexil/
 - Releases: GoReleaser. Targets: linux amd64/arm64, darwin amd64/arm64, windows amd64.
 - Docker: multi-stage build, distroless final image, runs as non-root, volume `/data`.
 - The distroless image has no `curl`. The binary has a `vexil healthcheck` subcommand. It calls `/readyz` and exits with code 0 or 1. The Dockerfile uses it in `HEALTHCHECK`.
+- The binary has a `vexil backup <file>` subcommand, next to `vexil reset-password` and `vexil healthcheck`. It writes one consistent copy of the database to a new file with `VACUUM INTO`, also while the server runs. It does not overwrite a file. It prints the path on success. The image has no `sqlite3` and no shell, so the docs use this command, not a copy of the data folder.
 - The README shows a Kubernetes example: `livenessProbe` on `/healthz`, `readinessProbe` on `/readyz`.
 - Docs: a systemd unit file example, a `docker run` one-liner, a `docker compose` example.
 

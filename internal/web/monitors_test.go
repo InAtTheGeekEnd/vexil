@@ -157,6 +157,15 @@ func TestMonitorFormValidation(t *testing.T) {
 		{"tcp bad port", url.Values{"type": {"tcp"}, "host": {"db"}, "port": {"70000"}, "interval": {"60"}}, "Enter a number between 1 and 65535."},
 		{"ping without host", url.Values{"type": {"ping"}, "interval": {"60"}}, "Enter a host name"},
 		{"dns bad ip", url.Values{"type": {"dns"}, "hostname": {"example.com"}, "expected_ip": {"nope"}, "interval": {"60"}}, "valid IP address"},
+		{"tcp host with a port", url.Values{"type": {"tcp"}, "host": {"db.example.com:5432"}, "port": {"5432"}, "interval": {"60"}}, "without http:// or a port"},
+		{"tcp host with a scheme", url.Values{"type": {"tcp"}, "host": {"https://db.example.com"}, "port": {"443"}, "interval": {"60"}}, "without http:// or a port"},
+		{"ping host with a scheme", url.Values{"type": {"ping"}, "host": {"https://example.com"}, "interval": {"60"}}, "without http:// or a port"},
+		{"ping host with a port", url.Values{"type": {"ping"}, "host": {"example.com:80"}, "interval": {"60"}}, "without http:// or a port"},
+		{"ping bracketed ipv6", url.Values{"type": {"ping"}, "host": {"[::1]"}, "interval": {"60"}}, "without http:// or a port"},
+		{"dns hostname with a path", url.Values{"type": {"dns"}, "hostname": {"https://example.com/x"}, "interval": {"60"}}, "without http:// or a port"},
+		{"dns hostname with a port", url.Values{"type": {"dns"}, "hostname": {"example.com:53"}, "interval": {"60"}}, "without http:// or a port"},
+		{"dns bare ipv4 address", url.Values{"type": {"dns"}, "hostname": {"93.184.215.14"}, "interval": {"60"}}, "not an IP address"},
+		{"dns bare ipv6 address", url.Values{"type": {"dns"}, "hostname": {"2001:db8::1"}, "interval": {"60"}}, "not an IP address"},
 		{"bad interval", url.Values{"type": {"push"}, "name": {"Job"}, "interval": {"45"}}, "Choose an interval"},
 		{"push without name", url.Values{"type": {"push"}, "interval": {"60"}}, "Enter a name"},
 		{"name too long", url.Values{"type": {"push"}, "name": {strings.Repeat("a", 61)}, "interval": {"60"}}, "60 characters or fewer"},
@@ -187,6 +196,12 @@ func TestMonitorFormValidation(t *testing.T) {
 	m, _ = st.Monitor(context.Background(), monitorID(t, res))
 	if m.Target != "localhost" || m.ExpectedIP != "127.0.0.1" || m.IntervalS != 86400 {
 		t.Fatalf("dns monitor = %+v", m)
+	}
+	// A bare IPv6 address is a valid ping target.
+	res = postForm(t, c, ts.URL+"/monitors/new", url.Values{"type": {"ping"}, "host": {"::1"}, "interval": {"60"}})
+	m, _ = st.Monitor(context.Background(), monitorID(t, res))
+	if m.Target != "::1" {
+		t.Fatalf("ping monitor = %+v", m)
 	}
 }
 

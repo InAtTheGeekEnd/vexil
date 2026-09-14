@@ -98,6 +98,10 @@ func TestValidate(t *testing.T) {
 		{"pushover repeat ok", store.Channel{Type: store.ChannelPushover, Config: map[string]string{"user": "u", "token": "a", "repeat": "1", "retry": "60", "expire": "180"}}, nil},
 		{"email ok", store.Channel{Type: store.ChannelEmail, Config: map[string]string{"host": "smtp.example.com", "port": "587", "from": "a@example.com", "to": "b@example.com"}}, nil},
 		{"email bad", store.Channel{Type: store.ChannelEmail, Config: map[string]string{"host": "smtp.example.com", "port": "0", "from": "nope", "to": "b@example.com"}}, []string{"port", "from"}},
+		{"email display names", store.Channel{Type: store.ChannelEmail, Config: map[string]string{"host": "smtp.example.com", "port": "587", "from": "Alerts Bot <alerts@example.com>", "to": "\"Ops, Team\" <ops@example.com>"}}, nil},
+		{"email two recipients", store.Channel{Type: store.ChannelEmail, Config: map[string]string{"host": "smtp.example.com", "port": "587", "from": "a@example.com", "to": "b@example.com, c@example.com"}}, []string{"to"}},
+		{"email unclosed bracket", store.Channel{Type: store.ChannelEmail, Config: map[string]string{"host": "smtp.example.com", "port": "587", "from": "Alerts <alerts@example.com", "to": "b@example.com"}}, []string{"from"}},
+		{"email no domain", store.Channel{Type: store.ChannelEmail, Config: map[string]string{"host": "smtp.example.com", "port": "587", "from": "a@example.com", "to": "ops"}}, []string{"to"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

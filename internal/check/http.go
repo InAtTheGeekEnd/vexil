@@ -27,12 +27,23 @@ type HTTP struct {
 var errTooManyRedirects = errors.New("too many redirects")
 
 var defaultClient = &http.Client{
+	// Every check opens a new connection. A reused one keeps the old
+	// certificate and DNS answer, and its latency leaves out the connect and
+	// the TLS handshake.
+	Transport: newCheckTransport(),
 	CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) >= maxRedirects {
 			return errTooManyRedirects
 		}
 		return nil
 	},
+}
+
+// newCheckTransport is the default transport without keep-alive.
+func newCheckTransport() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.DisableKeepAlives = true
+	return t
 }
 
 func (h *HTTP) Check(ctx context.Context) Result {

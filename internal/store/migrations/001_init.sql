@@ -1,5 +1,7 @@
+-- AUTOINCREMENT: the id of a deleted monitor is never used again. Ids leave
+-- the database in badge URLs, alert links and webhook payloads.
 CREATE TABLE monitors (
-  id          INTEGER PRIMARY KEY,
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
   name        TEXT NOT NULL,
   type        TEXT NOT NULL,
   target      TEXT NOT NULL,
@@ -13,15 +15,19 @@ CREATE TABLE monitors (
   created_at  INTEGER NOT NULL
 );
 
+-- The rows of a monitor go with it. The store opens every connection with
+-- foreign_keys on.
 CREATE TABLE checks (
   monitor_id  INTEGER NOT NULL,
   at          INTEGER NOT NULL,
   ok          INTEGER NOT NULL,
   latency_ms  INTEGER,
   status_code INTEGER,
-  error       TEXT
+  error       TEXT,
+  FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
 );
-CREATE INDEX checks_monitor_at ON checks(monitor_id, at);
+-- Covering: the stats read ok and latency_ms from the index, not the table.
+CREATE INDEX checks_monitor_at ON checks(monitor_id, at, ok, latency_ms);
 
 CREATE TABLE daily (
   monitor_id  INTEGER NOT NULL,
@@ -29,7 +35,8 @@ CREATE TABLE daily (
   total       INTEGER NOT NULL,
   ok          INTEGER NOT NULL,
   avg_latency INTEGER,
-  PRIMARY KEY (monitor_id, day)
+  PRIMARY KEY (monitor_id, day),
+  FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
 );
 
 CREATE TABLE incidents (
@@ -37,7 +44,8 @@ CREATE TABLE incidents (
   monitor_id  INTEGER NOT NULL,
   started_at  INTEGER NOT NULL,
   ended_at    INTEGER,
-  reason      TEXT
+  reason      TEXT,
+  FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
 );
 
 CREATE TABLE channels (

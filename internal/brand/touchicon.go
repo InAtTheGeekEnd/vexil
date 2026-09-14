@@ -20,7 +20,7 @@ func TouchIcon(b Brand) ([]byte, error) {
 	img := image.NewNRGBA(image.Rect(0, 0, TouchIconSize, TouchIconSize))
 	drawn := false
 	if b.Logo.Type == "image/png" {
-		if logo, err := png.Decode(bytes.NewReader(b.Logo.Data)); err == nil {
+		if logo, err := decodePNG(b.Logo.Data); err == nil {
 			drawLogo(img, logo)
 			drawn = true
 		}
@@ -33,6 +33,32 @@ func TouchIcon(b Brand) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// MaxLogoSide is the largest width or height of a PNG logo, in pixels.
+const MaxLogoSide = 4096
+
+// decodePNG decodes a PNG logo. It reads the size from the header first:
+// the decoder allocates the whole image from the header before it reads a
+// pixel, so a small file could ask for gigabytes. A panic in the decoder
+// becomes ErrLogoBroken.
+func decodePNG(data []byte) (img image.Image, err error) {
+	cfg, err := png.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return nil, ErrLogoBroken
+	}
+	if cfg.Width < 1 || cfg.Height < 1 || cfg.Width > MaxLogoSide || cfg.Height > MaxLogoSide {
+		return nil, ErrLogoDimensions
+	}
+	defer func() {
+		if recover() != nil {
+			img, err = nil, ErrLogoBroken
+		}
+	}()
+	if img, err = png.Decode(bytes.NewReader(data)); err != nil {
+		return nil, ErrLogoBroken
+	}
+	return img, nil
 }
 
 // The mark from web/static/brand/logo.svg in its 512 unit viewBox. Every

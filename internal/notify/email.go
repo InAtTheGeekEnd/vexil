@@ -3,12 +3,16 @@ package notify
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"html/template"
+	"log/slog"
 	"mime"
 	"net"
+	"net/mail"
 	"net/smtp"
 	"strings"
 	"time"
@@ -28,6 +32,14 @@ type email struct {
 // Every other port starts plain and upgrades with STARTTLS when the server
 // offers it. A login over a plain connection is refused.
 func (e *email) Send(ctx context.Context, m Message) error {
+	from, err := envelopeAddress(e.from)
+	if err != nil {
+		return err
+	}
+	to, err := envelopeAddress(e.to)
+	if err != nil {
+		return err
+	}
 	d := net.Dialer{Timeout: 15 * time.Second}
 	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(e.host, e.port))
 	if err != nil {
@@ -67,10 +79,10 @@ func (e *email) Send(ctx context.Context, m Message) error {
 			return smtpError(err)
 		}
 	}
-	if err := c.Mail(e.from); err != nil {
+	if err := c.Mail(from); err != nil {
 		return smtpError(err)
 	}
-	if err := c.Rcpt(e.to); err != nil {
+	if err := c.Rcpt(to); err != nil {
 		return smtpError(err)
 	}
 	w, err := c.Data()
@@ -83,7 +95,12 @@ func (e *email) Send(ctx context.Context, m Message) error {
 	if err := w.Close(); err != nil {
 		return smtpError(err)
 	}
-	return c.Quit()
+	// The server has accepted the message. A failed QUIT does not undo that,
+	// and a retry would send the alert again, so the failure is only logged.
+	if err := c.Quit(); err != nil {
+		slog.Warn("email QUIT failed after the server accepted the message", "host", e.host, "err", err)
+	}
+	return nil
 }
 
 // smtpError keeps the server's reply, which is short, and shortens
@@ -103,10 +120,11 @@ func smtpError(err error) error {
 func (e *email) body(m Message) []byte {
 	var b bytes.Buffer
 	boundary := "vx" + fmt.Sprintf("%d", m.At.UnixNano())
-	fmt.Fprintf(&b, "From: %s\r\n", e.from)
-	fmt.Fprintf(&b, "To: %s\r\n", e.to)
+	fmt.Fprintf(&b, "From: %s\r\n", headerAddress(e.from))
+	fmt.Fprintf(&b, "To: %s\r\n", headerAddress(e.to))
 	fmt.Fprintf(&b, "Subject: %s\r\n", mime.QEncoding.Encode("utf-8", m.Title()))
 	fmt.Fprintf(&b, "Date: %s\r\n", m.At.Format(time.RFC1123Z))
+	fmt.Fprintf(&b, "Message-ID: %s\r\n", messageID(e.from, m.At))
 	fmt.Fprintf(&b, "MIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=%q\r\n\r\n", boundary)
 	fmt.Fprintf(&b, "--%s\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n%s\r\n\r\n", boundary, crlf(m.Text()))
 	fmt.Fprintf(&b, "--%s\r\nContent-Type: text/html; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n", boundary)
@@ -115,6 +133,40 @@ func (e *email) body(m Message) []byte {
 	b.WriteString(crlf(html.String()))
 	fmt.Fprintf(&b, "\r\n--%s--\r\n", boundary)
 	return b.Bytes()
+}
+
+// messageID returns a unique Message-ID in the domain of the From address.
+// Some receivers refuse mail without one.
+func messageID(from string, at time.Time) string {
+	domain := "localhost"
+	if a, err := mail.ParseAddress(from); err == nil {
+		if i := strings.LastIndexByte(a.Address, '@'); i >= 0 && i < len(a.Address)-1 {
+			domain = a.Address[i+1:]
+		}
+	}
+	random := make([]byte, 8)
+	_, _ = rand.Read(random)
+	return fmt.Sprintf("<%d.%s@%s>", at.UnixNano(), hex.EncodeToString(random), domain)
+}
+
+// envelopeAddress returns the bare address of a From or To value, for MAIL
+// FROM and RCPT TO. The value can carry a display name, as in
+// "Alerts <alerts@example.com>".
+func envelopeAddress(s string) (string, error) {
+	a, err := mail.ParseAddress(s)
+	if err != nil {
+		return "", fmt.Errorf("%q is not a valid email address, so the mail cannot be sent", s)
+	}
+	return a.Address, nil
+}
+
+// headerAddress formats a From or To value for the mail header. It keeps
+// the display name and encodes it when it is not plain ASCII.
+func headerAddress(s string) string {
+	if a, err := mail.ParseAddress(s); err == nil {
+		return a.String()
+	}
+	return s
 }
 
 func crlf(s string) string {

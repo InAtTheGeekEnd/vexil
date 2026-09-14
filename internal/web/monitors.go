@@ -97,6 +97,45 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now()
+	// Three queries for all monitors, not a few per monitor (SPEC.md section
+	// 14: less than 50 ms). The bar and the percent read the daily rows of the
+	// days before today. Today and the sparkline come from the checks of the
+	// last 24 hours.
+	today := now.UTC().Truncate(24 * time.Hour)
+	first := today.AddDate(0, 0, -29)
+	daily, err := s.store.DailyTotals(ctx, first, today.AddDate(0, 0, -1))
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	// A day in the window without any daily row is not rolled up yet, as
+	// yesterday is until the job runs just after midnight. Count those days
+	// from the checks, in one more query for all monitors.
+	if missing := missingDays(first, today, daily); len(missing) > 0 {
+		counted, err := s.store.DailyFromChecks(ctx, missing)
+		if err != nil {
+			s.serverError(w, err)
+			return
+		}
+		for id, byDay := range counted {
+			if daily[id] == nil {
+				daily[id] = map[string]store.DayTotals{}
+			}
+			for day, t := range byDay {
+				daily[id][day] = t
+			}
+		}
+	}
+	incidents, err := s.store.IncidentDays(ctx, first)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	buckets, err := s.store.RecentBuckets(ctx, now.Add(-24*time.Hour), 30*time.Minute)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
 	content := dashboardContent{Monitors: len(monitors), Groups: make([]dashGroup, len(groups))}
 	index := make(map[int64]int, len(groups)) // group id to index in content.Groups
 	for i, g := range groups {
@@ -128,22 +167,14 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		if !m.Paused {
 			active++
 		}
-		days, err := s.store.DailyStats(ctx, m.ID, now.AddDate(0, 0, -29), now)
-		if err != nil {
-			s.serverError(w, err)
-			return
-		}
-		row.Uptime, row.UptimePct = uptimeBar(days)
-		series, err := s.store.LatencySeries(ctx, m.ID, now.Add(-24*time.Hour), 30*time.Minute)
-		if err != nil {
-			s.serverError(w, err)
-			return
-		}
-		if len(series) >= 2 {
-			values := make([]float64, len(series))
-			for i, p := range series {
-				values[i] = float64(p.LatencyMS)
+		row.Uptime, row.UptimePct = uptimeBar(dashboardDays(first, today, daily[m.ID], incidents[m.ID], buckets[m.ID]))
+		var values []float64
+		for _, b := range buckets[m.ID] {
+			if b.HasLatency {
+				values = append(values, float64(b.LatencyMS))
 			}
+		}
+		if len(values) >= 2 {
 			row.Spark = sparkline(fmt.Sprintf("spark-%d", m.ID), values)
 		}
 		// The store returns the drag order, so appending keeps it.
@@ -185,6 +216,46 @@ func headline(down, pending, active int) (string, string) {
 	return "All systems operational", "up"
 }
 
+// missingDays returns the days from first to the day before today that no
+// monitor has a daily row for. The job writes the rows of a day for all
+// monitors in one statement, so a day that one monitor has is complete.
+func missingDays(first, today time.Time, daily map[int64]map[string]store.DayTotals) []time.Time {
+	have := map[string]bool{}
+	for _, byDay := range daily {
+		for day := range byDay {
+			have[day] = true
+		}
+	}
+	var out []time.Time
+	for d := first; d.Before(today); d = d.AddDate(0, 0, 1) {
+		if !have[d.Format("2006-01-02")] {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// dashboardDays builds the 30 days of the uptime bar of one monitor: the
+// days before today from its daily rows, and today from its buckets of the
+// last 24 hours.
+func dashboardDays(first, today time.Time, daily map[string]store.DayTotals, incidents map[string]int, buckets []store.Bucket) []store.DayStat {
+	var days []store.DayStat
+	for d := first; d.Before(today); d = d.AddDate(0, 0, 1) {
+		key := d.Format("2006-01-02")
+		t := daily[key]
+		days = append(days, store.DayStat{Day: key, Total: t.Total, OK: t.OK, Incidents: incidents[key]})
+	}
+	key := today.Format("2006-01-02")
+	current := store.DayStat{Day: key, Incidents: incidents[key]}
+	for _, b := range buckets {
+		if !b.At.Before(today) {
+			current.Total += b.Total
+			current.OK += b.OK
+		}
+	}
+	return append(days, current)
+}
+
 // uptimeBar turns 30 day stats into bar segments and a 30-day percentage.
 func uptimeBar(days []store.DayStat) ([]uptimeDay, string) {
 	out := make([]uptimeDay, len(days))
@@ -222,6 +293,8 @@ func stateClass(st engine.State) string {
 		return "down"
 	case engine.Paused:
 		return "paused"
+	case engine.Deleted:
+		return "deleted"
 	}
 	return "pending"
 }
@@ -359,7 +432,12 @@ func (s *Server) handleMonitorDelete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.store.DeleteMonitor(r.Context(), m.ID); err != nil {
+	del := s.store.DeleteMonitor
+	if s.engine != nil {
+		// The engine drops a check result that arrives during the delete.
+		del = s.engine.DeleteMonitor
+	}
+	if err := del(r.Context(), m.ID); err != nil {
 		s.serverError(w, err)
 		return
 	}
@@ -511,6 +589,20 @@ func parseMonitorForm(r *http.Request) monitorForm {
 	return f
 }
 
+// hostWithExtras is the form error for a host with a scheme, a port or a
+// path around it.
+const hostWithExtras = "Enter a host name or IP address, without http:// or a port."
+
+// bareHost reports whether s is only a host name or an IP address. A
+// scheme, a port, a path or brackets around it can never pass a check.
+// With ip false, only a name counts: an IPv6 address has colons.
+func bareHost(s string, ip bool) bool {
+	if ip && net.ParseIP(s) != nil {
+		return true
+	}
+	return !strings.ContainsAny(s, ":/[]@ ")
+}
+
 // validate fills f.Errors and returns the monitor to save. It fills an
 // empty name from the target.
 func (f *monitorForm) validate() store.Monitor {
@@ -533,6 +625,8 @@ func (f *monitorForm) validate() store.Monitor {
 		port, err := strconv.Atoi(f.Port)
 		if f.Host == "" {
 			f.Errors["host"] = "Enter a host name or IP address."
+		} else if !bareHost(f.Host, true) {
+			f.Errors["host"] = hostWithExtras
 		}
 		if f.Port == "" || err != nil || port < 1 || port > 65535 {
 			f.Errors["port"] = "Enter a number between 1 and 65535."
@@ -544,6 +638,8 @@ func (f *monitorForm) validate() store.Monitor {
 	case store.TypePing:
 		if f.Host == "" {
 			f.Errors["host"] = "Enter a host name or IP address."
+		} else if !bareHost(f.Host, true) {
+			f.Errors["host"] = hostWithExtras
 		} else {
 			m.Target = f.Host
 			f.fillName(f.Host)
@@ -551,6 +647,12 @@ func (f *monitorForm) validate() store.Monitor {
 	case store.TypeDNS:
 		if f.Hostname == "" {
 			f.Errors["hostname"] = "Enter a host name."
+		} else if net.ParseIP(f.Hostname) != nil {
+			// The resolver returns an IP address unchanged, so the monitor
+			// would be UP for ever and check nothing.
+			f.Errors["hostname"] = "Enter a host name, not an IP address. A DNS check needs a name to look up."
+		} else if !bareHost(f.Hostname, false) {
+			f.Errors["hostname"] = "Enter a host name, without http:// or a port."
 		} else {
 			m.Target = f.Hostname
 			f.fillName(f.Hostname)

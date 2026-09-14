@@ -2,6 +2,7 @@ package web
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -126,13 +127,112 @@ func TestEventsStream(t *testing.T) {
 	s.CloseEvents() // a second call is harmless
 }
 
+// TestEventsOutliveWriteTimeout runs the stream on a server with a short
+// WriteTimeout, as vexil sets one. The stream clears its write deadline, so
+// heartbeats must keep arriving after the timeout.
+func TestEventsOutliveWriteTimeout(t *testing.T) {
+	old := sseHeartbeat
+	sseHeartbeat = 50 * time.Millisecond
+	t.Cleanup(func() { sseHeartbeat = old })
+
+	s, st := newTestServer(t, Options{})
+	setPassword(t, st)
+	token, hash, err := newSessionToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := st.CreateSession(context.Background(), hash, now, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	const writeTimeout = 200 * time.Millisecond
+	ts := httptest.NewUnstartedServer(s)
+	ts.Config.WriteTimeout = writeTimeout
+	ts.Start()
+	t.Cleanup(ts.Close)
+
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { res.Body.Close() })
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	r := bufio.NewReader(res.Body)
+	if line, _ := readEvent(t, r); line != "retry: 3000" {
+		t.Fatalf("first line = %q, want the retry hint", line)
+	}
+	for end := time.Now().Add(3 * writeTimeout); time.Now().Before(end); {
+		if line, _ := readEvent(t, r); !strings.HasPrefix(line, ":") {
+			t.Fatalf("line = %q, want a heartbeat comment", line)
+		}
+	}
+}
+
+// TestEventsEndWhenSessionEnds opens a stream and then ends the session. The
+// stream must close at the next heartbeat.
+func TestEventsEndWhenSessionEnds(t *testing.T) {
+	old := sseHeartbeat
+	sseHeartbeat = 50 * time.Millisecond
+	t.Cleanup(func() { sseHeartbeat = old })
+
+	s, st := newTestServer(t, Options{})
+	ts, c := loggedIn(t, s, st)
+	res := get(t, c, ts.URL+"/events")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	r := bufio.NewReader(res.Body)
+	if line, _ := readEvent(t, r); line != "retry: 3000" {
+		t.Fatalf("first line = %q, want the retry hint", line)
+	}
+	if line, _ := readEvent(t, r); !strings.HasPrefix(line, ":") {
+		t.Fatalf("line = %q, want a heartbeat while the session is valid", line)
+	}
+
+	if err := st.DeleteAllSessions(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		for {
+			if _, err := r.ReadString('\n'); err != nil {
+				done <- err
+				return
+			}
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the stream is still open after the session ended")
+	}
+}
+
 func TestEventsNeedLogin(t *testing.T) {
 	s, st := newTestServer(t, Options{})
 	setPassword(t, st)
 	ts := httptest.NewServer(s)
 	t.Cleanup(ts.Close)
+	// An EventSource cannot follow a redirect to the login page, so the
+	// stream answers 401 and the page shows that its data is old.
 	res := get(t, client(t), ts.URL+"/events")
-	if res.StatusCode != http.StatusFound || res.Header.Get("Location") != "/login" {
-		t.Fatalf("anonymous /events = %d -> %q", res.StatusCode, res.Header.Get("Location"))
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("anonymous /events = %d, want 401", res.StatusCode)
+	}
+
+	// A session that ends, as on logout or a password change, gets 401 too.
+	ts2, c := loggedIn(t, s, st)
+	if err := st.DeleteAllSessions(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if res := get(t, c, ts2.URL+"/events"); res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("/events after the session ended = %d, want 401", res.StatusCode)
 	}
 }

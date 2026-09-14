@@ -1,17 +1,20 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"io/fs"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -288,6 +291,7 @@ func TestSetup(t *testing.T) {
 	}{
 		{"too short", "short", "short", http.StatusBadRequest, "at least 10 characters"},
 		{"mismatch", "long enough one", "long enough two", http.StatusBadRequest, "do not match"},
+		{"longer than bcrypt takes", strings.Repeat("a", 73), strings.Repeat("a", 73), http.StatusBadRequest, "That password is too long. Use a shorter one."},
 		{"ok", testPassword, testPassword, http.StatusSeeOther, ""},
 	}
 	for _, tt := range tests {
@@ -407,6 +411,178 @@ func TestLoginRateLimit(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("other IP: status %d, want 401", rec.Code)
 	}
+}
+
+// TestClientIP checks the address that the login limit counts.
+// X-Forwarded-For counts only from a loopback or private address, and only
+// its rightmost entry, which the proxy wrote.
+func TestClientIP(t *testing.T) {
+	tests := []struct {
+		name       string
+		remoteAddr string
+		forwarded  []string
+		want       string
+	}{
+		{"direct public client", "203.0.113.7:1234", nil, "203.0.113.7"},
+		{"public client forges the header", "203.0.113.7:1234", []string{"198.51.100.9"}, "203.0.113.7"},
+		{"proxied client", "127.0.0.1:4321", []string{"198.51.100.9"}, "198.51.100.9"},
+		{"proxied client with a forged entry first", "127.0.0.1:4321", []string{"192.0.2.1, 198.51.100.9"}, "198.51.100.9"},
+		{"proxy on a private network", "172.18.0.1:4321", []string{"198.51.100.9"}, "198.51.100.9"},
+		{"last header line counts", "10.0.0.2:4321", []string{"192.0.2.1", "198.51.100.9"}, "198.51.100.9"},
+		{"ipv6 proxied client", "[::1]:4321", []string{"2001:db8::7"}, "2001:db8::7"},
+		{"proxy without the header", "127.0.0.1:4321", nil, "127.0.0.1"},
+		{"proxy with a bad header", "127.0.0.1:4321", []string{"unknown"}, "127.0.0.1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/login", nil)
+			req.RemoteAddr = tt.remoteAddr
+			for _, v := range tt.forwarded {
+				req.Header.Add("X-Forwarded-For", v)
+			}
+			if got := clientIP(req); got != tt.want {
+				t.Fatalf("clientIP = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestLoginRateLimitBehindProxy runs the login limit behind a reverse proxy
+// on 127.0.0.1. One client that uses up its attempts must not lock out
+// another client, and a public client must not escape the limit with a
+// forged header.
+func TestLoginRateLimitBehindProxy(t *testing.T) {
+	s, st := newTestServer(t, Options{})
+	setPassword(t, st)
+	login := func(remoteAddr, forwarded, password string) int {
+		t.Helper()
+		form := url.Values{"password": {password}}
+		req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.RemoteAddr = remoteAddr
+		req.Header.Set("X-Forwarded-For", forwarded)
+		rec := httptest.NewRecorder()
+		s.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	for i := 1; i <= 6; i++ {
+		want := http.StatusUnauthorized
+		if i > 5 {
+			want = http.StatusTooManyRequests
+		}
+		if code := login("127.0.0.1:4321", "203.0.113.7", "wrong wrong wrong"); code != want {
+			t.Fatalf("attacker attempt %d through the proxy = %d, want %d", i, code, want)
+		}
+	}
+	if code := login("127.0.0.1:4321", "198.51.100.9", testPassword); code != http.StatusSeeOther {
+		t.Fatalf("admin login through the proxy = %d, want 303", code)
+	}
+	for i := 1; i <= 6; i++ {
+		want := http.StatusUnauthorized
+		if i > 5 {
+			want = http.StatusTooManyRequests
+		}
+		if code := login("192.0.2.50:1234", "10.0.0."+strconv.Itoa(i), "wrong wrong wrong"); code != want {
+			t.Fatalf("public attempt %d with a forged header = %d, want %d", i, code, want)
+		}
+	}
+}
+
+// TestAuthFormsRefuseLargeBodies posts bodies that are not a small
+// URL-encoded form to the two forms that need no login. A multipart upload
+// must be refused before its body is read, so no temp file is written.
+func TestAuthFormsRefuseLargeBodies(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	// More than the 32 MB that ParseMultipartForm keeps in memory.
+	const fileSize = 40 << 20
+	upload := func() (io.Reader, string) {
+		var head bytes.Buffer
+		mw := multipart.NewWriter(&head)
+		if err := mw.WriteField("password", testPassword); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := mw.CreateFormFile("file", "big.bin"); err != nil {
+			t.Fatal(err)
+		}
+		tail := strings.NewReader("\r\n--" + mw.Boundary() + "--\r\n")
+		return io.MultiReader(&head, io.LimitReader(zeros{}, fileSize), tail), mw.FormDataContentType()
+	}
+	bigForm := func() (io.Reader, string) {
+		return strings.NewReader("password=" + strings.Repeat("a", 100<<10)), "application/x-www-form-urlencoded"
+	}
+	tests := []struct {
+		name     string
+		path     string
+		body     func() (io.Reader, string)
+		wantCode int
+		wantRead bool // the handler may read the body
+	}{
+		{"multipart login", "/login", upload, http.StatusUnsupportedMediaType, false},
+		{"multipart setup", "/setup", upload, http.StatusUnsupportedMediaType, false},
+		{"large form login", "/login", bigForm, http.StatusRequestEntityTooLarge, true},
+		{"large form setup", "/setup", bigForm, http.StatusRequestEntityTooLarge, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, st := newTestServer(t, Options{})
+			if tt.path == "/login" {
+				setPassword(t, st)
+			}
+			r, ctype := tt.body()
+			body := &countingReader{r: r}
+			req := httptest.NewRequest(http.MethodPost, tt.path, body)
+			req.Header.Set("Content-Type", ctype)
+			req.RemoteAddr = "203.0.113.7:1234"
+			rec := httptest.NewRecorder()
+			s.ServeHTTP(rec, req)
+			if rec.Code != tt.wantCode {
+				t.Fatalf("status = %d, want %d", rec.Code, tt.wantCode)
+			}
+			if !tt.wantRead && body.n > 0 {
+				t.Errorf("the handler read %d bytes of the body, want none", body.n)
+			}
+			entries, err := os.ReadDir(tmp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, e := range entries {
+				if strings.HasPrefix(e.Name(), "multipart-") {
+					t.Errorf("temp file %s was written", e.Name())
+				}
+			}
+		})
+	}
+	// Setup still accepts its own form after the refused requests.
+	s, _ := newTestServer(t, Options{})
+	form := url.Values{"password": {testPassword}, "confirm": {testPassword}}
+	req := httptest.NewRequest(http.MethodPost, "/setup", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("setup with a charset parameter = %d, want 303", rec.Code)
+	}
+}
+
+// zeros reads as an endless run of zero bytes.
+type zeros struct{}
+
+func (zeros) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
+}
+
+// countingReader counts the bytes read from r.
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
 }
 
 func TestNotFoundPage(t *testing.T) {

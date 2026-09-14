@@ -3,14 +3,17 @@ package check
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
 )
 
 // Timeout is the fixed time limit for one check.
@@ -69,6 +72,7 @@ func Describe(err error) string {
 	var unknownAuth x509.UnknownAuthorityError
 	var dnsErr *net.DNSError
 	var opErr *net.OpError
+	var recordErr tls.RecordHeaderError
 	switch {
 	case errors.As(err, &dnsErr):
 		if dnsErr.IsNotFound {
@@ -82,6 +86,10 @@ func Describe(err error) string {
 		return "timeout"
 	case errors.Is(err, context.Canceled):
 		return "cancelled"
+	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		return "connection closed"
+	case errors.As(err, &recordErr):
+		return "not an HTTPS server"
 	case errors.As(err, &certErr):
 		if certErr.Reason == x509.Expired {
 			return "certificate expired"
@@ -101,14 +109,41 @@ func Describe(err error) string {
 		return "timeout"
 	}
 	msg := err.Error()
-	if strings.Contains(msg, "tls:") || strings.Contains(msg, "x509:") {
+	if strings.Contains(msg, "x509:") {
 		return "invalid certificate"
+	}
+	// A TLS error that is not about the certificate, such as no common
+	// protocol version or cipher.
+	if strings.Contains(msg, "tls:") {
+		return "TLS handshake failed"
+	}
+	// net/http quotes the bytes of a response that it cannot parse. The
+	// server chooses those bytes, so they never go into the reason.
+	if strings.Contains(msg, "malformed") {
+		return "invalid HTTP response"
 	}
 	if i := strings.LastIndex(msg, ": "); i >= 0 {
 		msg = msg[i+2:]
 	}
-	if len(msg) > 60 {
-		msg = msg[:60]
+	return cleanReason(msg)
+}
+
+// maxReason is the longest reason, in characters. Reasons appear in alerts
+// and on the public status page.
+const maxReason = 60
+
+// cleanReason turns control and format characters, and invalid UTF-8, into
+// spaces, joins runs of spaces and cuts the text to maxReason characters.
+func cleanReason(msg string) string {
+	msg = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == unicode.ReplacementChar {
+			return ' '
+		}
+		return r
+	}, msg)
+	msg = strings.Join(strings.Fields(msg), " ")
+	if r := []rune(msg); len(r) > maxReason {
+		msg = strings.TrimSpace(string(r[:maxReason]))
 	}
 	return msg
 }

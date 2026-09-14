@@ -1,9 +1,25 @@
 package web
 
 import (
+	"net/netip"
 	"sync"
 	"time"
 )
+
+// loginKey returns the key that the login limit counts for a client
+// address. An IPv6 client usually holds a whole /64, so every address in it
+// shares one key. An IPv4 address is its own key.
+func loginKey(ip string) string {
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
+		return ip
+	}
+	addr = addr.WithZone("").Unmap()
+	if addr.Is4() {
+		return addr.String()
+	}
+	return netip.PrefixFrom(addr, 64).Masked().String()
+}
 
 // rateLimiter allows at most limit events per key inside a sliding window.
 type rateLimiter struct {

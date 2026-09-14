@@ -122,15 +122,66 @@ func (s *Store) deleteDay(ctx context.Context, monitorID int64, day time.Time, b
 	}
 }
 
-// RunRetention runs Retain at once and then every hour until ctx ends. The
-// returned channel closes when the job has stopped.
+// RollupDays writes the daily rows of the complete UTC days in the 30 days
+// before now, so the dashboard reads daily and not the raw checks. It
+// rewrites yesterday, whose last checks can come in after an earlier run,
+// and fills each older day that has no row yet, as after a downtime. Today
+// gets no row: the dashboard reads today from the checks.
+func (s *Store) RollupDays(ctx context.Context, now time.Time) error {
+	today := now.UTC().Truncate(24 * time.Hour)
+	yesterday := today.AddDate(0, 0, -1)
+	if err := s.rollupAll(ctx, yesterday, true); err != nil {
+		return err
+	}
+	for day := today.AddDate(0, 0, -29); day.Before(yesterday); day = day.AddDate(0, 0, 1) {
+		if err := s.rollupAll(ctx, day, false); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// rollupAll writes the daily rows of one UTC day for every monitor with
+// checks on it, in one statement. With replace it rewrites the existing
+// rows. Without replace it writes only the missing rows, so a filled day
+// costs almost nothing.
+func (s *Store) rollupAll(ctx context.Context, day time.Time, replace bool) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO daily (monitor_id, day, total, ok, avg_latency)
+		SELECT monitor_id, ?1, COUNT(*), SUM(ok), AVG(CASE WHEN ok = 1 THEN latency_ms END)
+		FROM checks
+		WHERE monitor_id IN (SELECT id FROM monitors WHERE ?2 OR id NOT IN (SELECT monitor_id FROM daily WHERE day = ?1))
+			AND at >= ?3 AND at < ?4
+		GROUP BY monitor_id
+		ON CONFLICT(monitor_id, day) DO UPDATE SET total = excluded.total, ok = excluded.ok, avg_latency = excluded.avg_latency`,
+		day.Format("2006-01-02"), replace, day.Unix(), day.Add(24*time.Hour).Unix())
+	return err
+}
+
+// nextRun returns the wait until the next run of the hourly job: an hour, or
+// until 30 seconds after the next UTC midnight when that comes first, so
+// yesterday gets its daily row soon after the day ends.
+func nextRun(now time.Time) time.Duration {
+	u := now.UTC()
+	midnight := time.Date(u.Year(), u.Month(), u.Day()+1, 0, 0, 30, 0, time.UTC)
+	return min(time.Hour, midnight.Sub(u))
+}
+
+// RunRetention deletes expired sessions, writes the daily rows of recent
+// days and runs Retain, at once and then every hour, and 30 seconds after
+// each UTC midnight, until ctx ends. The returned channel closes when the
+// job has stopped.
 func (s *Store) RunRetention(ctx context.Context, log *slog.Logger) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		t := time.NewTicker(time.Hour)
-		defer t.Stop()
 		for {
+			if err := s.DeleteExpiredSessions(ctx, time.Now()); err != nil && ctx.Err() == nil {
+				log.Error("delete expired sessions", "err", err)
+			}
+			if err := s.RollupDays(ctx, time.Now()); err != nil && ctx.Err() == nil {
+				log.Error("daily rollup failed", "err", err)
+			}
 			n, err := s.Retain(ctx, time.Now(), retentionBatch)
 			switch {
 			case ctx.Err() != nil:
@@ -143,7 +194,7 @@ func (s *Store) RunRetention(ctx context.Context, log *slog.Logger) <-chan struc
 			select {
 			case <-ctx.Done():
 				return
-			case <-t.C:
+			case <-time.After(nextRun(time.Now())):
 			}
 		}
 	}()

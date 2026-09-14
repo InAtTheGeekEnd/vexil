@@ -26,13 +26,16 @@ type Store struct {
 	db *sql.DB
 }
 
+// FileName is the name of the SQLite file inside the data folder.
+const FileName = "vexil.db"
+
 // Open creates the data folder if needed, opens the SQLite file inside it in
 // WAL mode and runs pending migrations.
 func Open(ctx context.Context, dataDir string) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o750); err != nil {
 		return nil, fmt.Errorf("create data folder: %w", err)
 	}
-	path := filepath.Join(dataDir, "vexil.db")
+	path := filepath.Join(dataDir, FileName)
 	q := url.Values{}
 	q.Add("_pragma", "journal_mode(WAL)")
 	q.Add("_pragma", "busy_timeout(5000)")
@@ -49,6 +52,10 @@ func Open(ctx context.Context, dataDir string) (*Store, error) {
 	db.SetMaxOpenConns(1)
 
 	s := &Store{db: db}
+	if err := s.refuseV1(ctx); err != nil {
+		db.Close()
+		return nil, err
+	}
 	if err := s.migrate(ctx); err != nil {
 		db.Close()
 		return nil, err
@@ -65,6 +72,27 @@ func (s *Store) Close() error {
 func (s *Store) Ping(ctx context.Context) error {
 	var one int
 	return s.db.QueryRowContext(ctx, "SELECT 1").Scan(&one)
+}
+
+// ErrV1Database reports a database from v1. Its schema reuses monitor ids
+// and does not cascade deletes, and v2 does not migrate it.
+var ErrV1Database = errors.New("the database is from v1 and must be recreated")
+
+// refuseV1 returns ErrV1Database when the monitors table was created without
+// AUTOINCREMENT, as v1 created it. A new database has no monitors table yet.
+func (s *Store) refuseV1(ctx context.Context) error {
+	var def string
+	err := s.db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'monitors'`).Scan(&def)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read the schema: %w", err)
+	}
+	if !strings.Contains(strings.ToUpper(def), "AUTOINCREMENT") {
+		return ErrV1Database
+	}
+	return nil
 }
 
 // migrate applies every embedded migration that is not yet recorded.

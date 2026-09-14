@@ -2,6 +2,7 @@
 //
 //	vexil                 start the server
 //	vexil reset-password  set a new admin password and log out all sessions
+//	vexil backup FILE     write a copy of the database to a new file
 //	vexil healthcheck     ask /readyz and exit with 0 or 1, for Docker
 //	vexil version         print the version
 package main
@@ -17,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"syscall"
@@ -48,6 +50,8 @@ func main() {
 		err = serve(cfg, log)
 	case "reset-password":
 		err = resetPassword(cfg)
+	case "backup":
+		err = backup(cfg, arg(2))
 	case "healthcheck":
 		err = healthcheck(cfg)
 	case "version", "-v", "--version":
@@ -58,6 +62,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "unknown command %q\n\n", cmd)
 		usage()
 		os.Exit(2)
+	}
+	if errors.Is(err, store.ErrV1Database) {
+		// One plain line, not a log record: the user must act on it.
+		fmt.Fprintf(os.Stderr, "The database in %s is from v1 and must be recreated.\n", cfg.Data)
+		os.Exit(1)
 	}
 	if err != nil {
 		log.Error("fatal", "err", err)
@@ -73,7 +82,7 @@ func arg(i int) string {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "Usage:\n  %[1]s                 start the server\n  %[1]s reset-password  set a new admin password\n  %[1]s healthcheck     exit 0 when /readyz answers ok\n  %[1]s version         print the version\n\nEnvironment:\n  VEXIL_ADDR      listen address (default :8080)\n  VEXIL_DATA      data folder (default ./data)\n  VEXIL_BASE_URL  public URL used in notification links\n", brand.Default.Name)
+	fmt.Fprintf(os.Stderr, "Usage:\n  %[1]s                 start the server\n  %[1]s reset-password  set a new admin password\n  %[1]s backup FILE     write a copy of the database to a new file\n  %[1]s healthcheck     exit 0 when /readyz answers ok\n  %[1]s version         print the version\n\nEnvironment:\n  VEXIL_ADDR      listen address (default :8080)\n  VEXIL_DATA      data folder (default ./data)\n  VEXIL_BASE_URL  public URL used in notification links\n", brand.Default.Name)
 }
 
 // versionString returns the release version, or the module version that
@@ -122,7 +131,13 @@ func serve(cfg config.Config, log *slog.Logger) error {
 		Addr:              cfg.Addr,
 		Handler:           srv,
 		ReadHeaderTimeout: 10 * time.Second,
-		IdleTimeout:       60 * time.Second,
+		// A whole request, body included, must arrive within a minute. The
+		// largest body is a logo upload.
+		ReadTimeout: time.Minute,
+		// A response must be written within a minute. The event stream
+		// clears its own write deadline.
+		WriteTimeout: time.Minute,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	// SSE streams are open requests. End them first so Shutdown does not
@@ -145,9 +160,18 @@ func serve(cfg config.Config, log *slog.Logger) error {
 	}
 
 	log.Info("shutting down")
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// One budget for the whole shutdown, so it ends before Docker stops
+	// waiting after 10 seconds (SPEC.md section 6.3). Each stage gets what is
+	// left: the open requests, then the engine with its running checks, alert
+	// calls and deliveries.
+	deadline := time.Now().Add(engine.ShutdownBudget)
+	shutdownCtx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
-	return httpSrv.Shutdown(shutdownCtx)
+	shutdownErr := httpSrv.Shutdown(shutdownCtx)
+	stopJobs()
+	<-retentionDone
+	eng.StopBy(deadline)
+	return shutdownErr
 }
 
 func resetPassword(cfg config.Config) error {
@@ -181,18 +205,42 @@ func resetPassword(cfg config.Config) error {
 	return nil
 }
 
+// backup writes a consistent copy of the database to a new file. It works
+// while the server runs and does not overwrite a file.
+func backup(cfg config.Config, path string) error {
+	if path == "" {
+		return fmt.Errorf("name a new file for the backup, for example: %s backup /data/backup.db", brand.Default.Name)
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	// Open would create an empty database in a wrong folder.
+	if _, err := os.Stat(filepath.Join(cfg.Data, store.FileName)); err != nil {
+		return fmt.Errorf("no database in %s: set VEXIL_DATA to the data folder", cfg.Data)
+	}
+	ctx := context.Background()
+	st, err := store.Open(ctx, cfg.Data)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	if err := st.Backup(ctx, abs); err != nil {
+		return err
+	}
+	fmt.Println("Backup written to " + abs)
+	return nil
+}
+
 // healthcheck asks the running server for /readyz. Docker calls it, as the
 // distroless image has no curl.
 func healthcheck(cfg config.Config) error {
-	host, port, err := net.SplitHostPort(cfg.Addr)
+	target, err := readyzURL(cfg.Addr)
 	if err != nil {
-		return fmt.Errorf("bad listen address %q: %w", cfg.Addr, err)
-	}
-	if host == "" || host == "0.0.0.0" || host == "::" {
-		host = "127.0.0.1"
+		return err
 	}
 	client := &http.Client{Timeout: 3 * time.Second}
-	res, err := client.Get("http://" + net.JoinHostPort(host, port) + "/readyz")
+	res, err := client.Get(target)
 	if err != nil {
 		return err
 	}
@@ -203,6 +251,20 @@ func healthcheck(cfg config.Config) error {
 	}
 	fmt.Println(strings.TrimSpace(string(body)))
 	return nil
+}
+
+// readyzURL returns the /readyz URL of the server that listens on addr. A
+// listen address with no host, or on every interface, is asked on
+// 127.0.0.1.
+func readyzURL(addr string) (string, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", fmt.Errorf("bad listen address %q: %w", addr, err)
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	return "http://" + net.JoinHostPort(host, port) + "/readyz", nil
 }
 
 // prompt reads one line from stdin. On a terminal it hides the typed text.

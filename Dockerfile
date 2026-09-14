@@ -13,13 +13,14 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     && mkdir -p /out/data
 
 # Final stage. Distroless static has CA certificates for HTTPS checks and
-# time zone data, and nothing else. The nonroot user is uid 65532.
+# time zone data, and nothing else. The nonroot user is uid 65532. The
+# binary is on PATH, so "docker exec vexil vexil reset-password" works.
 FROM gcr.io/distroless/static-debian12:nonroot
-COPY --from=build /out/vexil /vexil
+COPY --from=build /out/vexil /usr/local/bin/vexil
 COPY --from=build --chown=65532:65532 /out/data /data
 ENV VEXIL_DATA=/data
 VOLUME /data
 EXPOSE 8080
 USER 65532:65532
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["/vexil", "healthcheck"]
-ENTRYPOINT ["/vexil"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["/usr/local/bin/vexil", "healthcheck"]
+ENTRYPOINT ["/usr/local/bin/vexil"]

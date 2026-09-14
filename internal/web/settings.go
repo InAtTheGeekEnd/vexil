@@ -30,12 +30,22 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	s.renderSettings(w, http.StatusOK, s.settingsFromBrand(), "", "")
 }
 
+// tooLarge reports whether a form read stopped at the body limit.
+func tooLarge(err error) bool {
+	var limit *http.MaxBytesError
+	return errors.As(err, &limit)
+}
+
 // handleSettingsSave saves the brand. The form is multipart because of the
 // logo file. The body limit leaves room for the other fields.
 func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, brand.MaxLogoSize+64*1024)
 	if err := r.ParseMultipartForm(brand.MaxLogoSize); err != nil && !errors.Is(err, http.ErrNotMultipart) {
 		c := s.settingsFromBrand()
+		if !tooLarge(err) {
+			s.renderSettings(w, http.StatusBadRequest, c, "", "The form could not be read. Reload the page and try again.")
+			return
+		}
 		c.Errors["logo"] = capitalize(brand.ErrLogoTooLarge.Error()) + "."
 		s.renderSettings(w, http.StatusBadRequest, c, "", "")
 		return
@@ -73,7 +83,10 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 			c.Errors["logo"] = capitalize(err.Error()) + "."
 		}
 	} else if !errors.Is(err, http.ErrMissingFile) {
-		c.Errors["logo"] = capitalize(brand.ErrLogoTooLarge.Error()) + "."
+		c.Errors["logo"] = "The logo could not be read. Choose the file again."
+		if tooLarge(err) {
+			c.Errors["logo"] = capitalize(brand.ErrLogoTooLarge.Error()) + "."
+		}
 	}
 
 	if len(c.Errors) > 0 {

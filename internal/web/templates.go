@@ -19,7 +19,10 @@ import (
 
 // pageData is the data every template receives.
 type pageData struct {
-	Brand     brand.Brand
+	Brand brand.Brand
+	// Product is the product and binary name. Unlike Brand.Name, it does not
+	// change with the white label.
+	Product   string
 	Logo      string // URL of the uploaded logo, "" for the built-in one
 	Theme     string // URL of the accent style sheet
 	TouchIcon string // URL of the iOS home screen icon
@@ -122,6 +125,7 @@ func (s *Server) render(w http.ResponseWriter, status int, name string, data pag
 		http.Error(w, "template not found", http.StatusInternalServerError)
 		return
 	}
+	data.Product = brand.ProductName
 	if data.Brand.Name == "" {
 		b := s.currentBrand()
 		data.Brand, data.Logo, data.Theme, data.TouchIcon = b.Brand, b.LogoURL, b.ThemeURL, b.TouchIconURL

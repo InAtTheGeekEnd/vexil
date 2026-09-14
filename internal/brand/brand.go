@@ -27,9 +27,14 @@ type Brand struct {
 	Logo Logo
 }
 
+// ProductName is the name of the product and of its binary. Unlike the
+// brand name, it does not change with the white label, so help that names
+// the binary uses it.
+const ProductName = "vexil"
+
 // Default is the built-in brand.
 var Default = Brand{
-	Name:      "vexil",
+	Name:      ProductName,
 	Accent:    "#4F46E5",
 	PoweredBy: true,
 }
@@ -60,8 +65,10 @@ const MaxLogoSize = 512 * 1024
 
 // Logo errors.
 var (
-	ErrLogoTooLarge = errors.New("the logo must be 512 KB or smaller")
-	ErrLogoType     = errors.New("the logo must be an SVG or PNG file")
+	ErrLogoTooLarge   = errors.New("the logo must be 512 KB or smaller")
+	ErrLogoType       = errors.New("the logo must be an SVG or PNG file")
+	ErrLogoDimensions = errors.New("the logo must be 4096 by 4096 pixels or smaller")
+	ErrLogoBroken     = errors.New("the PNG logo cannot be read: export it again and upload the new file")
 )
 
 var pngMagic = []byte("\x89PNG\r\n\x1a\n")
@@ -73,6 +80,11 @@ func ParseLogo(data []byte) (Logo, error) {
 		return Logo{}, ErrLogoTooLarge
 	}
 	if bytes.HasPrefix(data, pngMagic) {
+		// Decode it now, so a file that the server cannot draw is refused
+		// before it is saved.
+		if _, err := decodePNG(data); err != nil {
+			return Logo{}, err
+		}
 		return Logo{Data: data, Type: "image/png"}, nil
 	}
 	if isSVG(data) {

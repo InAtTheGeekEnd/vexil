@@ -5,7 +5,9 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -119,6 +121,9 @@ func newEnv(t *testing.T) *testEnv {
 	env.engine.retryDelay = 30 * testScale
 	env.engine.maxOffset = 60 * testScale
 	env.engine.pushMinExtra = 30 * testScale
+	// Some test checkers end only on cancellation, which Stop sends after
+	// its deadline.
+	env.engine.stopWait = 300 * time.Millisecond
 	env.engine.newChecker = func(m store.Monitor) (check.Checker, error) {
 		env.mu.Lock()
 		defer env.mu.Unlock()
@@ -151,7 +156,10 @@ func waitFor(t *testing.T, ch <-chan Event, d time.Duration, pred func(Event) bo
 	deadline := time.After(d)
 	for {
 		select {
-		case ev := <-ch:
+		case ev, ok := <-ch:
+			if !ok {
+				t.Fatal("the hub dropped the subscription: the test read events too slowly")
+			}
 			if pred(ev) {
 				return ev
 			}
@@ -366,6 +374,97 @@ func TestPauseResumeDelete(t *testing.T) {
 	}
 }
 
+// switchable is a checker whose result the test can change.
+type switchable struct{ ok atomic.Bool }
+
+func (s *switchable) Check(context.Context) check.Result {
+	if s.ok.Load() {
+		return check.Result{OK: true, Latency: time.Millisecond}
+	}
+	return check.Result{Error: "HTTP 503"}
+}
+
+// TestResumeWithOpenIncident pauses a monitor and resumes it. Resume
+// restarts the state at PENDING. An incident that was open before the pause
+// must close on the first success with one UP alert, and new failures must
+// not open a second incident or send a second DOWN alert.
+func TestResumeWithOpenIncident(t *testing.T) {
+	tests := []struct {
+		name          string
+		downBefore    bool // DOWN with an open incident before the pause
+		okAfter       bool // checks pass after the resume
+		wantAlerts    []Alert
+		wantIncidents int
+		wantOpen      bool
+	}{
+		{"down, paused, up", true, true, []Alert{AlertDown, AlertUp}, 1, false},
+		{"down, paused, still down", true, false, []Alert{AlertDown}, 1, true},
+		{"up, paused, up", false, true, nil, 0, false},
+		{"up, paused, down", false, false, []Alert{AlertDown}, 1, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := newEnv(t)
+			ctx := context.Background()
+			c := &switchable{}
+			c.ok.Store(!tt.downBefore)
+			m := env.addMonitor(t, store.TypeHTTP, c)
+			events, stop := env.engine.Hub().Subscribe(64)
+			defer stop()
+			if err := env.engine.Start(ctx); err != nil {
+				t.Fatal(err)
+			}
+			before := Up
+			if tt.downBefore {
+				before = Down
+			}
+			waitFor(t, events, 5*time.Second, func(ev Event) bool { return ev.State == before })
+
+			setPaused := func(paused bool, want State) {
+				t.Helper()
+				if err := env.store.SetPaused(ctx, m.ID, paused); err != nil {
+					t.Fatal(err)
+				}
+				if err := env.engine.Reload(ctx, m.ID); err != nil {
+					t.Fatal(err)
+				}
+				waitFor(t, events, 5*time.Second, func(ev Event) bool { return ev.State == want })
+			}
+			setPaused(true, Paused)
+			c.ok.Store(tt.okAfter)
+			setPaused(false, Pending)
+
+			after := Down
+			if tt.okAfter {
+				after = Up
+			}
+			ev := waitFor(t, events, 5*time.Second, func(ev Event) bool { return ev.State == after })
+			if ev.Prev != Pending {
+				t.Fatalf("first state after the resume = %+v, want a change from PENDING", ev)
+			}
+
+			for _, kind := range []Alert{AlertDown, AlertUp} {
+				waitAlerts(t, env.notifier, kind, count(tt.wantAlerts, kind))
+			}
+			// Notify runs in its own goroutine: give a wrong alert time to show.
+			time.Sleep(100 * time.Millisecond)
+			if got := env.notifier.alerts(); !slices.Equal(got, tt.wantAlerts) {
+				t.Errorf("alerts = %v, want %v", got, tt.wantAlerts)
+			}
+			incidents, err := env.store.Incidents(ctx, m.ID, 10)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(incidents) != tt.wantIncidents {
+				t.Fatalf("incidents = %+v, want %d", incidents, tt.wantIncidents)
+			}
+			if tt.wantIncidents > 0 && incidents[0].Open() != tt.wantOpen {
+				t.Errorf("incident open = %v, want %v", incidents[0].Open(), tt.wantOpen)
+			}
+		})
+	}
+}
+
 func TestInitialStatusFromDatabase(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
@@ -379,7 +478,8 @@ func TestInitialStatusFromDatabase(t *testing.T) {
 	}{
 		{"no checks", nil, false, false, Pending, 0},
 		{"last ok", []bool{false, true}, false, false, Up, 0},
-		{"one failure", []bool{true, false}, false, false, Up, 1},
+		{"one failure after a success", []bool{true, false}, false, false, Up, 1},
+		{"one failure, never a success", []bool{false}, false, false, Pending, 1},
 		{"two failures", []bool{false, false}, false, false, Down, 2},
 		{"open incident", []bool{true, false}, true, false, Down, 2},
 		{"paused", []bool{false, false}, false, true, Paused, 0},
@@ -439,27 +539,49 @@ func TestReady(t *testing.T) {
 	}
 }
 
+// TestHub fans events out. A subscriber that falls behind loses its
+// subscription: its channel closes after the events it has, so it knows
+// that it missed one. Another subscriber keeps getting events.
 func TestHub(t *testing.T) {
+	// recv waits a moment for an event or a close, so a hub that neither
+	// sends nor closes fails the test instead of hanging it.
+	recv := func(ch <-chan Event) (Event, bool) {
+		t.Helper()
+		select {
+		case ev, ok := <-ch:
+			return ev, ok
+		case <-time.After(2 * time.Second):
+			t.Fatal("no event and no close within 2s")
+			return Event{}, false
+		}
+	}
 	h := NewHub()
-	a, stopA := h.Subscribe(1)
-	b, stopB := h.Subscribe(1)
-	defer stopB()
+	slow, stopSlow := h.Subscribe(1)
+	defer stopSlow()
+	fast, stopFast := h.Subscribe(2)
 	h.Publish(Event{MonitorID: 1})
-	h.Publish(Event{MonitorID: 2}) // dropped: buffers are full
-	if ev := <-a; ev.MonitorID != 1 {
-		t.Fatalf("a got %+v", ev)
+	h.Publish(Event{MonitorID: 2}) // the slow buffer is full: the hub drops it
+	if ev, ok := recv(slow); !ok || ev.MonitorID != 1 {
+		t.Fatalf("slow got %+v, open %v; want event 1", ev, ok)
 	}
-	if ev := <-b; ev.MonitorID != 1 {
-		t.Fatalf("b got %+v", ev)
+	if ev, ok := recv(slow); ok {
+		t.Fatalf("slow got %+v after it fell behind, want a closed channel", ev)
 	}
-	stopA()
-	stopA() // idempotent
+	for _, want := range []int64{1, 2} {
+		if ev, _ := recv(fast); ev.MonitorID != want {
+			t.Fatalf("fast got %+v, want event %d", ev, want)
+		}
+	}
 	h.Publish(Event{MonitorID: 3})
-	if len(a) != 0 {
-		t.Fatal("unsubscribed channel received an event")
+	if ev, _ := recv(fast); ev.MonitorID != 3 {
+		t.Fatalf("fast got %+v, want event 3", ev)
 	}
-	if ev := <-b; ev.MonitorID != 3 {
-		t.Fatalf("b got %+v", ev)
+	stopFast()
+	stopFast() // a second stop is harmless
+	stopSlow() // and so is a stop after the hub dropped the subscriber
+	h.Publish(Event{MonitorID: 4})
+	if _, ok := recv(fast); ok {
+		t.Fatal("a stopped subscription is still open")
 	}
 }
 
@@ -689,7 +811,7 @@ func TestFirstDelay(t *testing.T) {
 		{"no check, long interval: offset up to 60s", time.Hour, time.Time{}, false, 0, 60 * time.Second},
 		{"no check, short interval: offset up to the interval", 30 * time.Second, time.Time{}, false, 0, 30 * time.Second},
 		{"ok check 10s ago, 1m interval", time.Minute, now.Add(-10 * time.Second), true, 50*time.Second - tol, 50 * time.Second},
-		{"ok check 2m ago, 1m interval: overdue", time.Minute, now.Add(-2 * time.Minute), true, 0, 0},
+		{"ok check 2m ago, 1m interval: overdue, offset up to 60s", time.Minute, now.Add(-2 * time.Minute), true, 0, 60 * time.Second},
 		{"failed check 10s ago: retry at 30s", time.Hour, now.Add(-10 * time.Second), false, 20*time.Second - tol, 20 * time.Second},
 	}
 	for i, tt := range tests {
@@ -738,7 +860,7 @@ func TestScheduleSurvivesRestart(t *testing.T) {
 			t.Fatalf("check ran at %v, want about %v", ev.At, want)
 		}
 	})
-	t.Run("http overdue runs at once", func(t *testing.T) {
+	t.Run("http overdue runs within the start offset", func(t *testing.T) {
 		env := newEnv(t)
 		m := &store.Monitor{Name: "m", Type: store.TypeHTTP, Target: "x", IntervalS: 1000} // 20s
 		if err := env.store.CreateMonitor(ctx, m); err != nil {
@@ -752,7 +874,7 @@ func TestScheduleSurvivesRestart(t *testing.T) {
 		if err := env.engine.Start(ctx); err != nil {
 			t.Fatal(err)
 		}
-		waitFor(t, events, 500*time.Millisecond, func(ev Event) bool { return ev.MonitorID == m.ID })
+		waitFor(t, events, env.engine.maxOffset+500*time.Millisecond, func(ev Event) bool { return ev.MonitorID == m.ID })
 	})
 	t.Run("push keeps its last push time", func(t *testing.T) {
 		env := newEnv(t)

@@ -8,8 +8,10 @@ import (
 	"html/template"
 	"io/fs"
 	"log/slog"
+	"mime"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -120,7 +122,7 @@ func (s *Server) routes() http.Handler {
 
 	mux.Handle("GET /{$}", s.requireAdmin(http.HandlerFunc(s.handleDashboard)))
 	mux.Handle("GET /styleguide", s.requireAdmin(http.HandlerFunc(s.handleStyleguide)))
-	mux.Handle("GET /events", s.requireAdmin(http.HandlerFunc(s.handleEvents)))
+	mux.Handle("GET /events", s.requireSession(http.HandlerFunc(s.handleEvents)))
 	admin := map[string]http.HandlerFunc{
 		"GET /monitors/new":               s.handleMonitorNewForm,
 		"POST /monitors/new":              s.handleMonitorCreate,
@@ -186,6 +188,24 @@ func (s *Server) requireAdmin(next http.Handler) http.Handler {
 		}
 		if !ok {
 			http.Redirect(w, r, "/login", http.StatusFound)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// requireSession is requireAdmin for the event stream. An EventSource cannot
+// show a login page, so a request without a valid session gets 401 and the
+// page marks its data as old.
+func (s *Server) requireSession(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ok, err := s.loggedIn(r)
+		if err != nil {
+			s.serverError(w, err)
+			return
+		}
+		if !ok {
+			http.Error(w, "log in first", http.StatusUnauthorized)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -282,7 +302,36 @@ func (s *Server) handleSetupForm(w http.ResponseWriter, r *http.Request) {
 	s.render(w, http.StatusOK, "setup.html", pageData{})
 }
 
+// maxAuthForm is the body limit of the login and setup forms. They carry
+// one or two passwords.
+const maxAuthForm = 8 << 10
+
+// parseAuthForm reads the small URL-encoded body of a form that needs no
+// login. It refuses any other content type, multipart included, before it
+// reads the body, so an anonymous client cannot stream an upload to a temp
+// file.
+func parseAuthForm(w http.ResponseWriter, r *http.Request) bool {
+	if mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt != "application/x-www-form-urlencoded" {
+		http.Error(w, "send the form as application/x-www-form-urlencoded", http.StatusUnsupportedMediaType)
+		return false
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxAuthForm)
+	if err := r.ParseForm(); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			http.Error(w, "the form is too large", http.StatusRequestEntityTooLarge)
+		} else {
+			http.Error(w, "the form could not be read", http.StatusBadRequest)
+		}
+		return false
+	}
+	return true
+}
+
 func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
+	if !parseAuthForm(w, r) {
+		return
+	}
 	has, err := s.store.HasPassword(r.Context())
 	if err != nil {
 		s.serverError(w, err)
@@ -302,8 +351,14 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
-	if err := s.store.SetPasswordHash(r.Context(), hash, ""); err != nil {
+	set, err := s.store.SetFirstPasswordHash(r.Context(), hash)
+	if err != nil {
 		s.serverError(w, err)
+		return
+	}
+	if !set {
+		// Another setup request set the password first.
+		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
 	if err := s.startSession(w, r); err != nil {
@@ -333,6 +388,9 @@ func (s *Server) handleLoginForm(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if !parseAuthForm(w, r) {
+		return
+	}
 	hash, err := s.store.PasswordHash(r.Context())
 	if errors.Is(err, store.ErrNotFound) {
 		http.Redirect(w, r, "/setup", http.StatusFound)
@@ -342,7 +400,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
-	if !s.loginLimit.allow(clientIP(r), time.Now()) {
+	if !s.loginLimit.allow(loginKey(clientIP(r)), time.Now()) {
 		s.render(w, http.StatusTooManyRequests, "login.html",
 			pageData{Error: "Too many attempts. Wait one minute and try again."})
 		return
@@ -369,12 +427,29 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 // --- Helpers ---
 
+// clientIP returns the address that the login limit counts. Behind a
+// reverse proxy on a loopback or private address, it is the rightmost
+// address in X-Forwarded-For, which the proxy appends. A client on the
+// internet connects from a public address, so an X-Forwarded-For header
+// that it sends itself does not count.
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
 	}
-	return host
+	forwarded := r.Header.Values("X-Forwarded-For")
+	if len(forwarded) == 0 || !trustedProxy(r.RemoteAddr) {
+		return host
+	}
+	last := forwarded[len(forwarded)-1]
+	if i := strings.LastIndexByte(last, ','); i >= 0 {
+		last = last[i+1:]
+	}
+	ip, err := netip.ParseAddr(strings.TrimSpace(last))
+	if err != nil {
+		return host
+	}
+	return ip.Unmap().String()
 }
 
 func capitalize(s string) string {

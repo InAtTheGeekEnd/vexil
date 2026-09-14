@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"strings"
 	"sync"
@@ -16,6 +17,9 @@ import (
 
 // retryDelays are the waits between attempts (SPEC.md section 7.4).
 var retryDelays = []time.Duration{5 * time.Second, 30 * time.Second, 2 * time.Minute}
+
+// errDropped ends the retries of an alert that is no longer true.
+var errDropped = errors.New("alert dropped")
 
 // sendTimeout limits one delivery attempt.
 const sendTimeout = 15 * time.Second
@@ -89,6 +93,27 @@ func (s *Service) Notify(ctx context.Context, ev engine.Event) {
 // Wait blocks until every delivery in progress has ended. Tests use it.
 func (s *Service) Wait() { s.wg.Wait() }
 
+// WaitUntil waits until every delivery in progress has ended, or until the
+// deadline, and reports whether all ended. The engine calls it with what is
+// left of its shutdown budget, so the alerts of the last results go out while
+// the database is still open. A delivery that waits for a retry past the
+// deadline is lost (SPEC.md section 7.4).
+func (s *Service) WaitUntil(deadline time.Time) bool {
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
+	timer := time.NewTimer(time.Until(deadline))
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
+}
+
 // brandName returns the product name from the settings, or the default
 // from Options when none is saved.
 func (s *Service) brandName(ctx context.Context) string {
@@ -157,17 +182,31 @@ func (s *Service) deliver(ctx context.Context, c store.Channel, m Message) {
 			s.cancel(ctx, c, cn, m)
 		}()
 	}
-	failed, err := s.withRetries(ctx, c, "alert delivery", func(ctx context.Context) error { return sender.Send(ctx, m) })
-	if err != nil {
-		if ctx.Err() == nil {
-			s.fail(ctx, c, err.Error())
+	attempts := 0
+	_, err = s.withRetries(ctx, c, "alert delivery", func(ctx context.Context) error {
+		attempts++
+		// A DOWN alert that waits for a retry is dropped once its incident
+		// has closed: the UP alert can be out already, and a late DOWN alert
+		// would say the monitor is down while it is up. An attempt that is on
+		// its way when the incident closes still counts, and the cancel below
+		// stops its repeats.
+		if attempts > 1 && m.Kind == KindDown && s.recovered(ctx, m) {
+			return errDropped
 		}
+		return sender.Send(ctx, m)
+	})
+	if errors.Is(err, errDropped) {
+		s.log.Info("DOWN alert dropped: the monitor recovered before a retry", "channel", c.ID, "name", c.Name, "monitor", m.Monitor.ID)
 		return
 	}
-	if c.LastError != "" || failed > 0 {
-		if err := s.store.SetChannelError(ctx, c.ID, "", time.Time{}); err != nil {
-			s.log.Error("clear channel error", "channel", c.ID, "err", err)
-		}
+	if err != nil {
+		s.fail(ctx, c, err.Error())
+		return
+	}
+	// Clear the error on every success. This copy of the channel can be older
+	// than an error that another delivery stored.
+	if err := s.store.ClearChannelError(ctx, c.ID); err != nil {
+		s.log.Error("clear channel error", "channel", c.ID, "err", err)
 	}
 	if cancels && m.Kind == KindDown && s.recovered(ctx, m) {
 		// The incident of this alert closed while the alert was on its way,
@@ -188,6 +227,9 @@ func (s *Service) withRetries(ctx context.Context, c store.Channel, what string,
 		if err == nil {
 			return attempt, nil
 		}
+		if errors.Is(err, errDropped) {
+			return attempt, err
+		}
 		last := Redact(err.Error(), Secrets(c))
 		if attempt >= len(retryDelays) {
 			return attempt + 1, errors.New(last)
@@ -203,7 +245,7 @@ func (s *Service) withRetries(ctx context.Context, c store.Channel, what string,
 // failure is only logged. The channel error shows alert deliveries only.
 func (s *Service) cancel(ctx context.Context, c store.Channel, cn canceler, m Message) {
 	_, err := s.withRetries(ctx, c, "alert cancel", func(ctx context.Context) error { return cn.Cancel(ctx, m) })
-	if err != nil && ctx.Err() == nil {
+	if err != nil {
 		s.log.Error("alert cancel failed", "channel", c.ID, "name", c.Name, "type", c.Type, "err", err.Error())
 	}
 }
@@ -221,6 +263,19 @@ func (s *Service) recovered(ctx context.Context, m Message) bool {
 
 func (s *Service) fail(ctx context.Context, c store.Channel, msg string) {
 	s.log.Error("alert delivery failed", "channel", c.ID, "name", c.Name, "type", c.Type, "err", msg)
+	// The delivery used the channel as it was when the alert fired. When the
+	// user has changed or deleted it since, the failure says nothing about
+	// the channel now, so it is not stored.
+	cur, err := s.store.Channel(ctx, c.ID)
+	if err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			s.log.Error("read channel", "channel", c.ID, "err", err)
+		}
+		return
+	}
+	if !maps.Equal(cur.Config, c.Config) {
+		return
+	}
 	if err := s.store.SetChannelError(ctx, c.ID, msg, time.Now()); err != nil {
 		s.log.Error("record channel error", "channel", c.ID, "err", err)
 	}
