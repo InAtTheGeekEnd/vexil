@@ -351,8 +351,14 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
-	if err := s.store.SetPasswordHash(r.Context(), hash, ""); err != nil {
+	set, err := s.store.SetFirstPasswordHash(r.Context(), hash)
+	if err != nil {
 		s.serverError(w, err)
+		return
+	}
+	if !set {
+		// Another setup request set the password first.
+		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
 	if err := s.startSession(w, r); err != nil {
