@@ -5,6 +5,7 @@ vexil is a simple, self-hosted uptime monitor. One binary, one data folder, no e
 - Monitors HTTP, TCP, ping, DNS and push targets.
 - Sends alerts to email, Slack, Discord, Telegram, ntfy, Pushover and webhooks.
 - Serves a public status page and status badges.
+- Groups monitors under headings on the dashboard and on the status page.
 - Runs as one static Go binary with SQLite inside the data folder.
 
 ## Screenshots
@@ -143,7 +144,7 @@ Plain HTTP is acceptable on a trusted private network, for example at home or ov
 
 ### Public status page and custom domain
 
-The status page is at `/status`. It shows the monitors that have **Show on status page** on. Every public monitor also has a badge at `/badge/{id}.svg`; the monitor page shows the URL.
+The status page is at `/status`. It shows the monitors that have **Show on status page** on. A group shows as a heading only when at least one of its monitors is public, so a group with only private monitors does not appear at all. Every public monitor also has a badge at `/badge/{id}.svg`; the monitor page shows the URL.
 
 There are two ways to put vexil on a domain.
 
