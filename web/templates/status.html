@@ -38,7 +38,7 @@
       <thead><tr><th>Monitor</th><th>Start</th><th>Duration</th><th>Reason</th></tr></thead>
       <tbody>
       {{range .Incidents}}
-        <tr{{if .Open}} class="incident-open"{{end}}><td class="nowrap td-name" title="{{.Monitor}}">{{.Monitor}}</td><td class="nowrap">{{.Start}}</td><td class="nowrap">{{.Duration}}</td><td>{{.Reason}}</td></tr>
+        <tr{{if .Open}} class="incident-open"{{end}}><td class="nowrap td-name" title="{{.Monitor}}">{{.Monitor}}</td><td class="nowrap">{{.Start}}</td><td class="nowrap">{{.Duration}}</td><td class="nowrap">{{.Reason}}</td></tr>
       {{end}}
       </tbody>
     </table>
