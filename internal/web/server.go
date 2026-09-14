@@ -400,7 +400,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
-	if !s.loginLimit.allow(clientIP(r), time.Now()) {
+	if !s.loginLimit.allow(loginKey(clientIP(r)), time.Now()) {
 		s.render(w, http.StatusTooManyRequests, "login.html",
 			pageData{Error: "Too many attempts. Wait one minute and try again."})
 		return
