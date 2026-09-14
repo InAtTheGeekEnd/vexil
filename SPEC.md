@@ -288,7 +288,7 @@ When the monitor comes back UP, vexil cancels the repeats of its DOWN alert. vex
 
 ```sql
 CREATE TABLE monitors (
-  id          INTEGER PRIMARY KEY,
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,  -- never reused: ids are in badge URLs, alert links and webhook payloads
   name        TEXT NOT NULL,
   type        TEXT NOT NULL,          -- http, tcp, ping, dns, push
   target      TEXT NOT NULL,          -- URL, host, host:port, or hostname
@@ -318,7 +318,8 @@ CREATE TABLE checks (
   ok          INTEGER NOT NULL,
   latency_ms  INTEGER,
   status_code INTEGER,
-  error       TEXT
+  error       TEXT,
+  FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
 );
 CREATE INDEX checks_monitor_at ON checks(monitor_id, at);
 
@@ -328,7 +329,8 @@ CREATE TABLE daily (
   total       INTEGER NOT NULL,
   ok          INTEGER NOT NULL,
   avg_latency INTEGER,
-  PRIMARY KEY (monitor_id, day)
+  PRIMARY KEY (monitor_id, day),
+  FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
 );
 
 CREATE TABLE incidents (
@@ -336,7 +338,8 @@ CREATE TABLE incidents (
   monitor_id  INTEGER NOT NULL,
   started_at  INTEGER NOT NULL,
   ended_at    INTEGER,
-  reason      TEXT
+  reason      TEXT,
+  FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
 );
 
 CREATE TABLE channels (
@@ -362,6 +365,7 @@ CREATE TABLE settings (
 ```
 
 - Use WAL mode.
+- Open every connection with `PRAGMA foreign_keys = ON`, so a deleted monitor takes its checks, daily rows and incidents with it.
 - Migrations: numbered `.sql` files in `internal/store/migrations`, embedded, run at startup.
 - A background job runs every hour. It updates `daily` and deletes `checks` rows older than 30 days.
 - Backup: the user copies the `data` folder. Document this in the README.

@@ -79,10 +79,27 @@ func TestMonitorCRUD(t *testing.T) {
 	}
 }
 
+// createMonitors adds n monitors to an empty store. They get the ids 1 to n,
+// which the tests below use: the foreign keys refuse a row of a monitor that
+// does not exist.
+func createMonitors(t *testing.T, s *Store, n int) {
+	t.Helper()
+	for i := 1; i <= n; i++ {
+		m := &Monitor{Name: "m", Type: TypeHTTP, Target: "https://example.com", IntervalS: 60}
+		if err := s.CreateMonitor(context.Background(), m); err != nil {
+			t.Fatal(err)
+		}
+		if m.ID != int64(i) {
+			t.Fatalf("monitor id = %d, want %d", m.ID, i)
+		}
+	}
+}
+
 func TestIncidentStartedAt(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
 	base := time.Unix(1_700_000_000, 0)
+	createMonitors(t, s, 2)
 	if _, err := s.OpenIncident(ctx, 1, base, "timeout"); err != nil {
 		t.Fatal(err)
 	}
@@ -123,6 +140,7 @@ func TestChecksAndIncidents(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
 	base := time.Unix(1_700_000_000, 0)
+	createMonitors(t, s, 2)
 
 	checks := []Check{
 		{MonitorID: 1, At: base, OK: true, LatencyMS: 120, StatusCode: 200},
