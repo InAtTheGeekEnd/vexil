@@ -5,7 +5,9 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -363,6 +365,97 @@ func TestPauseResumeDelete(t *testing.T) {
 	env.engine.mu.Unlock()
 	if running {
 		t.Fatal("runner survived delete")
+	}
+}
+
+// switchable is a checker whose result the test can change.
+type switchable struct{ ok atomic.Bool }
+
+func (s *switchable) Check(context.Context) check.Result {
+	if s.ok.Load() {
+		return check.Result{OK: true, Latency: time.Millisecond}
+	}
+	return check.Result{Error: "HTTP 503"}
+}
+
+// TestResumeWithOpenIncident pauses a monitor and resumes it. Resume
+// restarts the state at PENDING. An incident that was open before the pause
+// must close on the first success with one UP alert, and new failures must
+// not open a second incident or send a second DOWN alert.
+func TestResumeWithOpenIncident(t *testing.T) {
+	tests := []struct {
+		name          string
+		downBefore    bool // DOWN with an open incident before the pause
+		okAfter       bool // checks pass after the resume
+		wantAlerts    []Alert
+		wantIncidents int
+		wantOpen      bool
+	}{
+		{"down, paused, up", true, true, []Alert{AlertDown, AlertUp}, 1, false},
+		{"down, paused, still down", true, false, []Alert{AlertDown}, 1, true},
+		{"up, paused, up", false, true, nil, 0, false},
+		{"up, paused, down", false, false, []Alert{AlertDown}, 1, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := newEnv(t)
+			ctx := context.Background()
+			c := &switchable{}
+			c.ok.Store(!tt.downBefore)
+			m := env.addMonitor(t, store.TypeHTTP, c)
+			events, stop := env.engine.Hub().Subscribe(64)
+			defer stop()
+			if err := env.engine.Start(ctx); err != nil {
+				t.Fatal(err)
+			}
+			before := Up
+			if tt.downBefore {
+				before = Down
+			}
+			waitFor(t, events, 5*time.Second, func(ev Event) bool { return ev.State == before })
+
+			setPaused := func(paused bool, want State) {
+				t.Helper()
+				if err := env.store.SetPaused(ctx, m.ID, paused); err != nil {
+					t.Fatal(err)
+				}
+				if err := env.engine.Reload(ctx, m.ID); err != nil {
+					t.Fatal(err)
+				}
+				waitFor(t, events, 5*time.Second, func(ev Event) bool { return ev.State == want })
+			}
+			setPaused(true, Paused)
+			c.ok.Store(tt.okAfter)
+			setPaused(false, Pending)
+
+			after := Down
+			if tt.okAfter {
+				after = Up
+			}
+			ev := waitFor(t, events, 5*time.Second, func(ev Event) bool { return ev.State == after })
+			if ev.Prev != Pending {
+				t.Fatalf("first state after the resume = %+v, want a change from PENDING", ev)
+			}
+
+			for _, kind := range []Alert{AlertDown, AlertUp} {
+				waitAlerts(t, env.notifier, kind, count(tt.wantAlerts, kind))
+			}
+			// Notify runs in its own goroutine: give a wrong alert time to show.
+			time.Sleep(100 * time.Millisecond)
+			if got := env.notifier.alerts(); !slices.Equal(got, tt.wantAlerts) {
+				t.Errorf("alerts = %v, want %v", got, tt.wantAlerts)
+			}
+			incidents, err := env.store.Incidents(ctx, m.ID, 10)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(incidents) != tt.wantIncidents {
+				t.Fatalf("incidents = %+v, want %d", incidents, tt.wantIncidents)
+			}
+			if tt.wantIncidents > 0 && incidents[0].Open() != tt.wantOpen {
+				t.Errorf("incident open = %v, want %v", incidents[0].Open(), tt.wantOpen)
+			}
+		})
 	}
 }
 

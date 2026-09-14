@@ -501,6 +501,22 @@ func (e *Engine) handle(r result) {
 	}
 	e.mu.Unlock()
 
+	// A monitor that was DOWN can be paused and resumed, which restarts it
+	// at PENDING while its incident stays open. That incident is still the
+	// same outage: the first success closes it with an UP alert, and new
+	// failures open no second incident and send no second DOWN alert.
+	switch {
+	case alert == AlertNone && ev.State == Up && prev != Up:
+		if e.hasOpenIncident(ctx, r.monitorID) {
+			alert = AlertUp
+		}
+	case alert == AlertDown:
+		if e.hasOpenIncident(ctx, r.monitorID) {
+			alert = AlertNone
+		}
+	}
+	ev.Alert = alert
+
 	if err := e.store.InsertCheck(ctx, store.Check{
 		MonitorID:  r.monitorID,
 		At:         r.at,
@@ -536,6 +552,16 @@ func (e *Engine) handle(r result) {
 		go e.notifier.Notify(context.Background(), cert)
 	}
 	e.hub.Publish(ev)
+}
+
+// hasOpenIncident reports whether a monitor has an open incident. A read
+// error counts as no incident and is logged.
+func (e *Engine) hasOpenIncident(ctx context.Context, id int64) bool {
+	_, err := e.store.CurrentIncident(ctx, id)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		e.log.Error("read open incident", "monitor", id, "err", err)
+	}
+	return err == nil
 }
 
 // certExpiring reports whether a certificate expires within certWarnBefore
