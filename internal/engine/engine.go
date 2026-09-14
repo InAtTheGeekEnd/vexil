@@ -147,7 +147,7 @@ func (e *Engine) Start(ctx context.Context) error {
 		}
 		e.status[m.ID] = st
 		if !m.Paused {
-			e.startRunnerLocked(m)
+			e.startRunnerLocked(m, false)
 		}
 	}
 	e.started = true
@@ -231,7 +231,7 @@ func (e *Engine) Reload(ctx context.Context, id int64) error {
 			st.State, st.Fails = Pending, 0
 		}
 		if e.started && !e.stopped {
-			e.startRunnerLocked(m)
+			e.startRunnerLocked(m, prev == Paused)
 		}
 	}
 	if st.State != prev {
@@ -350,7 +350,8 @@ func (e *Engine) initialStatus(ctx context.Context, m store.Monitor) (*Status, e
 }
 
 // startRunnerLocked starts the goroutine for m. The caller holds e.mu.
-func (e *Engine) startRunnerLocked(m store.Monitor) {
+// resumed is true when a paused monitor starts again.
+func (e *Engine) startRunnerLocked(m store.Monitor, resumed bool) {
 	// A runner in the map is never replaced while it runs. The caller cannot
 	// wait for it here, as it can need e.mu to end.
 	if old := e.runners[m.ID]; old != nil {
@@ -359,21 +360,21 @@ func (e *Engine) startRunnerLocked(m store.Monitor) {
 	ctx, cancel := context.WithCancel(e.baseCtx)
 	r := &runner{cancel: cancel, done: make(chan struct{})}
 	e.runners[m.ID] = r
-	go e.run(ctx, m, r)
+	go e.run(ctx, m, r, resumed)
 }
 
 // run is the goroutine of one monitor. Each tick says how long to wait for
 // the next one: the interval after a success, retryDelay after a failure.
 // The wait counts from the start of the tick so a slow check does not
 // shift the schedule.
-func (e *Engine) run(ctx context.Context, m store.Monitor, r *runner) {
+func (e *Engine) run(ctx context.Context, m store.Monitor, r *runner, resumed bool) {
 	defer close(r.done)
 
 	interval := e.interval(m)
 	if interval <= 0 {
 		interval = time.Minute
 	}
-	tick := e.tickFunc(m, interval)
+	tick := e.tickFunc(m, interval, resumed)
 	if tick == nil {
 		return
 	}
@@ -433,8 +434,9 @@ func (e *Engine) pushGrace(interval time.Duration) time.Duration {
 }
 
 // tickFunc returns what one tick does for a monitor. The function returns
-// the wait until the next tick.
-func (e *Engine) tickFunc(m store.Monitor, interval time.Duration) func(context.Context) time.Duration {
+// the wait until the next tick. resumed is true when a paused monitor starts
+// again.
+func (e *Engine) tickFunc(m store.Monitor, interval time.Duration, resumed bool) func(context.Context) time.Duration {
 	if m.Type == store.TypePush {
 		grace := e.pushGrace(interval)
 		start := time.Now()
@@ -442,8 +444,11 @@ func (e *Engine) tickFunc(m store.Monitor, interval time.Duration) func(context.
 			now := time.Now()
 			e.mu.Lock()
 			ref := start
-			if st := e.status[m.ID]; st != nil && !st.LastPush.IsZero() {
-				ref = st.LastPush // restored from the database at start
+			// The last push counts, also as restored from the database at
+			// start. After a resume, only a push after the resume counts: no
+			// push was due while the monitor was paused.
+			if st := e.status[m.ID]; st != nil && !st.LastPush.IsZero() && (!resumed || st.LastPush.After(start)) {
+				ref = st.LastPush
 			}
 			e.mu.Unlock()
 			if wait := ref.Add(grace).Sub(now); wait > 0 {
