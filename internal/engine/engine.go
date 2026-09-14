@@ -64,6 +64,7 @@ type Engine struct {
 	retryDelay   time.Duration
 	maxOffset    time.Duration
 	pushMinExtra time.Duration
+	stopWait     time.Duration // how long Stop waits for running checks
 
 	sem     chan struct{}
 	results chan result
@@ -96,6 +97,7 @@ func New(st *store.Store, opts Options) *Engine {
 		retryDelay:   defaultRetryDelay,
 		maxOffset:    defaultMaxOffset,
 		pushMinExtra: defaultPushMinExtra,
+		stopWait:     shutdownWait,
 		sem:          make(chan struct{}, maxConcurrent),
 		results:      make(chan result, 256),
 		stopCh:       make(chan struct{}),
@@ -172,12 +174,18 @@ func (e *Engine) Stop() {
 	}
 	e.mu.Unlock()
 
-	deadline := time.After(shutdownWait)
+	// One deadline for all runners: once it passes, Stop waits for none of
+	// them. A timer channel delivers once, so a select on it per runner would
+	// wait without a limit for every runner after the first late one.
+	timeout := time.NewTimer(e.stopWait)
+	defer timeout.Stop()
+wait:
 	for _, r := range runners {
 		select {
 		case <-r.done:
-		case <-deadline:
+		case <-timeout.C:
 			e.log.Warn("engine stop: checks still running after timeout")
+			break wait
 		}
 	}
 	close(e.stopCh)
