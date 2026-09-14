@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read
@@ -28,6 +29,16 @@ jobs:
         run: go test -race ./...
       - name: Build without cgo
         run: CGO_ENABLED=0 go build ./cmd/vexil
+
+  chrome:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: go test -race -tags chrome
+        run: go test -race -tags chrome ./internal/web
 
   docker:
     runs-on: ubuntu-latest

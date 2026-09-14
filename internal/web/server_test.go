@@ -25,6 +25,54 @@ import (
 
 const testPassword = "correct horse battery"
 
+// seed is a monitor for seedServer, with two recent checks that passed or,
+// when down is true, two that failed.
+type seed struct {
+	name         string
+	down, public bool
+}
+
+// seedServer is a running server with the seeded monitors. It returns their
+// ids in order. Every monitor points at a closed port, so a real check fails.
+func seedServer(t *testing.T, seeds ...seed) (*Server, *store.Store, []int64) {
+	t.Helper()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	st, err := store.Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	ctx := context.Background()
+	now := time.Now()
+	var ids []int64
+	for _, sd := range seeds {
+		m := &store.Monitor{Name: sd.name, Type: store.TypeTCP, Target: "127.0.0.1:1", IntervalS: 900, Public: sd.public}
+		if err := st.CreateMonitor(ctx, m); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, m.ID)
+		for _, age := range []time.Duration{time.Minute, 2 * time.Minute} {
+			c := store.Check{MonitorID: m.ID, At: now.Add(-age), OK: !sd.down, LatencyMS: 12}
+			if sd.down {
+				c.Error = "connection refused"
+			}
+			if err := st.InsertCheck(ctx, c); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	eng := engine.New(st, engine.Options{Log: log})
+	if err := eng.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(eng.Stop)
+	s, err := New(st, Options{Log: log, Engine: eng})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s, st, ids
+}
+
 func newTestServer(t *testing.T, opts Options) (*Server, *store.Store) {
 	t.Helper()
 	return newServer(t, opts, true)

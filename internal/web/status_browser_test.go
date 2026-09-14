@@ -1,3 +1,5 @@
+//go:build chrome
+
 package web
 
 import (
@@ -19,10 +21,7 @@ const fastRefresh = `(function () { var wait = window.setTimeout; window.setTime
 // add the group heading in the dashboard order, with the monitor, and then
 // remove both.
 func TestStatusGroupsRefreshInChrome(t *testing.T) {
-	path := chromePath()
-	if path == "" {
-		t.Skip("no Chrome or Chromium found; set VEXIL_CHROME")
-	}
+	path := requireChrome(t)
 	s, st, ids := seedServer(t, seed{name: "Site", public: true}, seed{name: "Vault"}, seed{name: "Inbox", public: true})
 	setPassword(t, st)
 	ctx := context.Background()
@@ -48,7 +47,7 @@ func TestStatusGroupsRefreshInChrome(t *testing.T) {
 	// shows is the group headings and the monitor names on the page.
 	const shows = "Array.from(document.querySelectorAll('.status-group-name')).map(function (h) { return h.textContent; }).join(',') + '|' + " +
 		"Array.from(document.querySelectorAll('.status-name')).map(function (n) { return n.textContent; }).join(',')"
-	waitFor(t, page, session, shows+" === 'Web,Mail|Site,Inbox'", "the page without Internal")
+	waitForValue(t, page, session, shows, "Web,Mail|Site,Inbox", "the page without Internal")
 
 	// setPublic sets the status page switch of Vault, the only monitor in
 	// Internal.
@@ -63,7 +62,7 @@ func TestStatusGroupsRefreshInChrome(t *testing.T) {
 		}
 	}
 	setPublic(true)
-	waitFor(t, page, session, shows+" === 'Web,Internal,Mail|Site,Vault,Inbox'", "the refresh to add Internal")
+	waitForValue(t, page, session, shows, "Web,Internal,Mail|Site,Vault,Inbox", "the refresh to add Internal")
 	setPublic(false)
-	waitFor(t, page, session, shows+" === 'Web,Mail|Site,Inbox'", "the refresh to remove Internal")
+	waitForValue(t, page, session, shows, "Web,Mail|Site,Inbox", "the refresh to remove Internal")
 }

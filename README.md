@@ -281,6 +281,8 @@ gofmt -l .                  # must print nothing
 
 The build works with `CGO_ENABLED=0`. See `SPEC.md` for the product specification.
 
+The browser tests need Chrome or Chromium: run them with `go test -race -tags chrome ./internal/web`, and set `VEXIL_CHROME` if the browser is not found. CI runs them in their own job.
+
 CI runs `gofmt`, `go vet`, `staticcheck`, `go test -race` and a Docker build on every push. A tag like `v1.2.3` builds the release binaries with GoReleaser and pushes the image to `ghcr.io/inatthegeekend/vexil`. The binary reports its version with `vexil version`.
 
 ## License

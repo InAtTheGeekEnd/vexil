@@ -1,3 +1,5 @@
+//go:build chrome
+
 package web
 
 import (
@@ -5,10 +7,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"image"
 	"image/png"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -17,13 +20,26 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/InAtTheGeekEnd/vexil/internal/brand"
-	"github.com/InAtTheGeekEnd/vexil/internal/engine"
 	"github.com/InAtTheGeekEnd/vexil/internal/store"
 )
+
+const (
+	// browserWait is how long a Chrome test waits for one condition or for
+	// one answer from Chrome. It is long so that a slow or busy machine
+	// still passes. A wait ends as soon as its condition holds.
+	browserWait = time.Minute
+	// pollEvery is the time between two looks at a condition.
+	pollEvery = 100 * time.Millisecond
+)
+
+// chromeMu lets one Chrome test run at a time: each one starts browsers and
+// needs the machine to itself.
+var chromeMu sync.Mutex
 
 // chromePath returns a headless-capable Chrome or Chromium binary, or "".
 func chromePath() string {
@@ -40,6 +56,38 @@ func chromePath() string {
 		}
 	}
 	return ""
+}
+
+// requireChrome returns the browser for a Chrome test and holds the test
+// until no other Chrome test runs. The Chrome tests build only with the
+// chrome tag, so a missing browser fails the test.
+func requireChrome(t *testing.T) string {
+	t.Helper()
+	path := chromePath()
+	if path == "" {
+		t.Fatal("no Chrome or Chromium found; set VEXIL_CHROME")
+	}
+	chromeMu.Lock()
+	t.Cleanup(chromeMu.Unlock)
+	return path
+}
+
+// poll looks at a condition every pollEvery until it holds. check reports
+// whether it holds and what it saw. After browserWait the test fails with
+// what it waited for and what it saw last.
+func poll(t *testing.T, what string, check func() (bool, string)) {
+	t.Helper()
+	deadline := time.Now().Add(browserWait)
+	for {
+		ok, saw := check()
+		if ok {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("waited %v for %s, saw %q", browserWait, what, saw)
+		}
+		time.Sleep(pollEvery)
+	}
 }
 
 // iconProbe is what the page reports about its tab icon.
@@ -77,6 +125,19 @@ const iconProbeJS = `(function (points) {
   });
 })`
 
+// iconHref is a page expression for the href of the tab icon.
+const iconHref = "document.querySelector('link[rel=icon]').getAttribute('href')"
+
+// liveOpen runs before the page scripts and sets window.probeLive when the
+// event stream of the page is open. The server subscribes before it answers,
+// so an engine event after that reaches the page. An event before it is lost.
+const liveOpen = `window.EventSource = class extends window.EventSource {
+  constructor(url, init) {
+    super(url, init);
+    this.addEventListener("open", function () { window.probeLive = true; });
+  }
+};`
+
 // browserFixture is a logged-in server that headless Chrome can load
 // without a cookie jar: the wrapper adds the admin session to each request.
 func browserFixture(t *testing.T, s *Server, st *store.Store) (*httptest.Server, *http.Client) {
@@ -106,10 +167,11 @@ func browserFixture(t *testing.T, s *Server, st *store.Store) (*httptest.Server,
 // The protocol needs no WebSocket this way: each message is JSON followed
 // by a NUL byte on file descriptors 3 and 4.
 type chrome struct {
-	t  *testing.T
-	w  *os.File
-	r  *bufio.Reader
-	id int
+	t    *testing.T
+	w    *os.File
+	pipe *os.File // the end Chrome writes to, for read deadlines
+	r    *bufio.Reader
+	id   int
 }
 
 type cdpMessage struct {
@@ -136,21 +198,20 @@ func startChrome(t *testing.T, path string) *chrome {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	cmd := exec.CommandContext(ctx, path,
+	cmd := exec.Command(path,
 		"--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
 		"--user-data-dir="+profile, "--remote-debugging-pipe", "about:blank")
 	cmd.ExtraFiles = []*os.File{toChrome, fromChrome}
 	if err := cmd.Start(); err != nil {
-		cancel()
 		t.Fatalf("start chrome: %v", err)
 	}
 	toChrome.Close()
 	fromChrome.Close()
-	c := &chrome{t: t, w: w, r: bufio.NewReader(r)}
+	c := &chrome{t: t, w: w, pipe: r, r: bufio.NewReader(r)}
 	t.Cleanup(func() {
 		// A clean close lets Chrome end its helper processes before the
 		// profile is removed. Reading on keeps the pipe from filling up.
+		_ = r.SetReadDeadline(time.Time{})
 		go func() { _, _ = io.Copy(io.Discard, c.r) }()
 		_, _ = c.send("", "Browser.close", map[string]any{})
 		exited := make(chan struct{})
@@ -160,15 +221,20 @@ func startChrome(t *testing.T, path string) *chrome {
 		}()
 		select {
 		case <-exited:
-		case <-time.After(10 * time.Second):
-			cancel()
+		case <-time.After(browserWait):
+			t.Logf("waited %v for Chrome to close, saw it still running; killed it", browserWait)
+			_ = cmd.Process.Kill()
 			<-exited
 		}
-		cancel()
 		w.Close()
 		r.Close()
-		for i := 0; i < 50 && os.RemoveAll(profile) != nil; i++ {
-			time.Sleep(100 * time.Millisecond)
+		deadline := time.Now().Add(browserWait)
+		for err := os.RemoveAll(profile); err != nil; err = os.RemoveAll(profile) {
+			if time.Now().After(deadline) {
+				t.Logf("waited %v to remove the Chrome profile, saw %v", browserWait, err)
+				break
+			}
+			time.Sleep(pollEvery)
 		}
 	})
 	return c
@@ -192,12 +258,29 @@ func (c *chrome) send(session, method string, params map[string]any) (int, error
 // call sends one command and returns its result. Events are skipped.
 func (c *chrome) call(session, method string, params map[string]any) json.RawMessage {
 	c.t.Helper()
+	res, err := c.try(session, method, params)
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	return res
+}
+
+// try is call that returns an error answer from Chrome. It still fails the
+// test when Chrome is gone or does not answer within browserWait.
+func (c *chrome) try(session, method string, params map[string]any) (json.RawMessage, error) {
+	c.t.Helper()
 	id, err := c.send(session, method, params)
 	if err != nil {
 		c.t.Fatalf("send %s: %v", method, err)
 	}
+	if err := c.pipe.SetReadDeadline(time.Now().Add(browserWait)); err != nil {
+		c.t.Fatal(err)
+	}
 	for {
 		line, err := c.r.ReadBytes(0)
+		if errors.Is(err, os.ErrDeadlineExceeded) {
+			c.t.Fatalf("waited %v for Chrome to answer %s, saw no answer", browserWait, method)
+		}
 		if err != nil {
 			c.t.Fatalf("read from chrome during %s: %v", method, err)
 		}
@@ -209,9 +292,9 @@ func (c *chrome) call(session, method string, params map[string]any) json.RawMes
 			continue
 		}
 		if m.Error != nil {
-			c.t.Fatalf("%s: %s", method, m.Error)
+			return nil, fmt.Errorf("%s: %s", method, m.Error)
 		}
-		return m.Result
+		return m.Result, nil
 	}
 }
 
@@ -219,36 +302,76 @@ func (c *chrome) call(session, method string, params map[string]any) json.RawMes
 // promise to settle first.
 func (c *chrome) eval(session, expr string, out any) {
 	c.t.Helper()
-	res := c.call(session, "Runtime.evaluate", map[string]any{"expression": expr, "awaitPromise": true, "returnByValue": true})
+	if err := c.tryEval(session, expr, out); err != nil {
+		c.t.Fatal(err)
+	}
+}
+
+// tryEval is eval that returns an error when Chrome or the page script fails.
+func (c *chrome) tryEval(session, expr string, out any) error {
+	c.t.Helper()
+	res, err := c.try(session, "Runtime.evaluate", map[string]any{"expression": expr, "awaitPromise": true, "returnByValue": true})
+	if err != nil {
+		return err
+	}
 	var r struct {
 		Result struct {
 			Value json.RawMessage `json:"value"`
 		} `json:"result"`
-		ExceptionDetails json.RawMessage `json:"exceptionDetails"`
+		ExceptionDetails *struct {
+			Text      string `json:"text"`
+			Exception struct {
+				Description string `json:"description"`
+			} `json:"exception"`
+		} `json:"exceptionDetails"`
 	}
 	if err := json.Unmarshal(res, &r); err != nil {
-		c.t.Fatal(err)
+		return err
 	}
-	if r.ExceptionDetails != nil {
-		c.t.Fatalf("page script failed: %s", r.ExceptionDetails)
+	if e := r.ExceptionDetails; e != nil {
+		desc, _, _ := strings.Cut(e.Exception.Description, "\n")
+		return fmt.Errorf("page script failed: %s %s", e.Text, desc)
 	}
 	if err := json.Unmarshal(r.Result.Value, out); err != nil {
-		c.t.Fatalf("page value %s: %v", r.Result.Value, err)
+		return fmt.Errorf("page value %s: %v", r.Result.Value, err)
 	}
+	return nil
 }
 
-// waitFor polls a page expression until it is true.
-func waitFor(t *testing.T, c *chrome, session, expr, what string) {
+// waitFor polls a page expression until it is true. saw is a page expression
+// for the failure message. A look that fails, as it can while one document
+// replaces another, counts as not yet.
+func waitFor(t *testing.T, c *chrome, session, expr, saw, what string) {
 	t.Helper()
-	for i := 0; i < 200; i++ {
-		var ok bool
-		c.eval(session, "!!("+expr+")", &ok)
-		if ok {
-			return
+	poll(t, what, func() (bool, string) {
+		var r struct {
+			OK  bool   `json:"ok"`
+			Saw string `json:"saw"`
 		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	t.Fatalf("timed out waiting for %s", what)
+		if err := c.tryEval(session, "({ok: !!("+expr+"), saw: String("+saw+")})", &r); err != nil {
+			return false, err.Error()
+		}
+		return r.OK, r.Saw
+	})
+}
+
+// waitForValue polls a page expression until its value as a string is want.
+func waitForValue(t *testing.T, c *chrome, session, expr, want, what string) {
+	t.Helper()
+	waitFor(t, c, session, "String("+expr+") === "+strconv.Quote(want), expr, what+" "+strconv.Quote(want))
+}
+
+// waitForIcon polls until the tab icon links href with a fragment.
+func waitForIcon(t *testing.T, c *chrome, session, href, what string) {
+	t.Helper()
+	waitFor(t, c, session, iconHref+".indexOf("+strconv.Quote(href+"#")+") === 0", iconHref, what)
+}
+
+// waitLive polls until the event stream of the page is open. The page must
+// be opened with liveOpen.
+func waitLive(t *testing.T, c *chrome, session string) {
+	t.Helper()
+	waitFor(t, c, session, "window.probeLive === true", "window.probeLive === true ? 'open' : 'not open'", "the event stream to open")
 }
 
 // loadPage navigates the page and waits for the new document. The marker is
@@ -258,7 +381,8 @@ func loadPage(t *testing.T, c *chrome, session, pageURL string) {
 	var ok bool
 	c.eval(session, "(window.probeOld = true)", &ok)
 	c.call(session, "Page.navigate", map[string]any{"url": pageURL})
-	waitFor(t, c, session, "document.readyState === 'complete' && !window.probeOld", "the page to load")
+	waitFor(t, c, session, "document.readyState === 'complete' && !window.probeOld",
+		"document.readyState + (window.probeOld ? ', old document' : ', new document')", pageURL+" to load")
 }
 
 // openPage opens a page with a theme in headless Chrome and returns the
@@ -288,7 +412,7 @@ func openPage(t *testing.T, path, pageURL, theme, init string) (*chrome, string)
 	load := func() string {
 		loadPage(t, c, session, pageURL)
 		var href string
-		c.eval(session, "document.querySelector('link[rel=icon]').getAttribute('href')", &href)
+		c.eval(session, iconHref, &href)
 		return href
 	}
 	// The theme is chosen by the page script from localStorage, so it is
@@ -355,54 +479,6 @@ func bluePNG(t *testing.T) []byte {
 	return buf.Bytes()
 }
 
-// seed is a monitor for seedServer, with two recent checks that passed or,
-// when down is true, two that failed.
-type seed struct {
-	name         string
-	down, public bool
-}
-
-// seedServer is a running server with the seeded monitors. It returns their
-// ids in order. Every monitor points at a closed port, so a real check fails.
-func seedServer(t *testing.T, seeds ...seed) (*Server, *store.Store, []int64) {
-	t.Helper()
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	st, err := store.Open(context.Background(), t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
-	ctx := context.Background()
-	now := time.Now()
-	var ids []int64
-	for _, sd := range seeds {
-		m := &store.Monitor{Name: sd.name, Type: store.TypeTCP, Target: "127.0.0.1:1", IntervalS: 900, Public: sd.public}
-		if err := st.CreateMonitor(ctx, m); err != nil {
-			t.Fatal(err)
-		}
-		ids = append(ids, m.ID)
-		for _, age := range []time.Duration{time.Minute, 2 * time.Minute} {
-			c := store.Check{MonitorID: m.ID, At: now.Add(-age), OK: !sd.down, LatencyMS: 12}
-			if sd.down {
-				c.Error = "connection refused"
-			}
-			if err := st.InsertCheck(ctx, c); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-	eng := engine.New(st, engine.Options{Log: log})
-	if err := eng.Start(ctx); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(eng.Stop)
-	s, err := New(st, Options{Log: log, Engine: eng})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return s, st, ids
-}
-
 // dashboardServer is a running server with one monitor that is up and,
 // when down is true, one more that is down. It returns the id of the
 // monitor that is up.
@@ -420,10 +496,7 @@ func dashboardServer(t *testing.T, down bool) (*Server, *store.Store, int64) {
 // pixels of the tab icon: for the built-in logo in both themes, for a PNG
 // and an SVG logo, in both states and after a live change of state.
 func TestFaviconPixels(t *testing.T) {
-	path := chromePath()
-	if path == "" {
-		t.Skip("no Chrome or Chromium found; set VEXIL_CHROME")
-	}
+	path := requireChrome(t)
 	up, down, blue := hexRGB(t, brand.UpColor), hexRGB(t, brand.DownColor), [3]int{0x1E, 0x40, 0xAF}
 	// Points on the 64 pixel icon: the banner of the mark, the middle of a
 	// logo and the red dot on an uploaded logo.
@@ -489,22 +562,24 @@ func TestFaviconPixels(t *testing.T) {
 	t.Run("live change", func(t *testing.T) {
 		s, st, alpha := dashboardServer(t, false)
 		ts, _ := browserFixture(t, s, st)
-		page, session := openPage(t, path, ts.URL+"/", "light", "")
-		row := `document.querySelector('.mon-row[data-id="` + strconv.FormatInt(alpha, 10) + `"] .mon-checked')`
-		var at string
-		page.eval(session, "String("+row+".dataset.at)", &at)
+		page, session := openPage(t, path, ts.URL+"/", "light", liveOpen)
+		// An event sent before the event stream is open is lost.
+		waitLive(t, page, session)
+		at := `document.querySelector('.mon-row[data-id="` + strconv.FormatInt(alpha, 10) + `"] .mon-checked').dataset.at`
+		var before string
+		page.eval(session, "String("+at+")", &before)
 		// The first failed check proves that events reach the page. The
 		// second one turns the monitor down.
 		ctx := context.Background()
 		if _, err := s.engine.CheckNow(ctx, alpha); err != nil {
 			t.Fatal(err)
 		}
-		waitFor(t, page, session, "String("+row+".dataset.at) !== "+strconv.Quote(at), "the check event")
+		waitFor(t, page, session, "String("+at+") !== "+strconv.Quote(before), at, "the check event to change the checked time "+strconv.Quote(before))
 		if _, err := s.engine.CheckNow(ctx, alpha); err != nil {
 			t.Fatal(err)
 		}
 		b := s.currentBrand()
-		waitFor(t, page, session, "document.querySelector('link[rel=icon]').getAttribute('href').indexOf("+strconv.Quote(b.FaviconDownURL+"#")+") === 0", "the down icon")
+		waitForIcon(t, page, session, b.FaviconDownURL, "the down icon")
 		p := iconPixels(t, page, session, banner)
 		if !near(p.Pixels[0], down) {
 			t.Errorf("banner pixel = %v, want %v", p.Pixels[0], down)
@@ -520,10 +595,7 @@ func TestFaviconPixels(t *testing.T) {
 // is down must not turn it red, a public one must, and the minute refresh
 // must swap it while the page is open.
 func TestStatusIconPixels(t *testing.T) {
-	path := chromePath()
-	if path == "" {
-		t.Skip("no Chrome or Chromium found; set VEXIL_CHROME")
-	}
+	path := requireChrome(t)
 	banner := [2]int{32, 34}
 	open := func(t *testing.T, privateDown, publicDown bool, init string) (*Server, int64, *chrome, string) {
 		t.Helper()
@@ -570,8 +642,7 @@ func TestStatusIconPixels(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		down := s.currentBrand().FaviconDownURL + "#"
-		waitFor(t, page, session, "document.querySelector('link[rel=icon]').getAttribute('href').indexOf("+strconv.Quote(down)+") === 0", "the refresh to swap the icon")
+		waitForIcon(t, page, session, s.currentBrand().FaviconDownURL, "the refresh to swap the icon")
 		check(t, s, page, session, true)
 	})
 }
