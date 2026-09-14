@@ -26,13 +26,16 @@ type Store struct {
 	db *sql.DB
 }
 
+// FileName is the name of the SQLite file inside the data folder.
+const FileName = "vexil.db"
+
 // Open creates the data folder if needed, opens the SQLite file inside it in
 // WAL mode and runs pending migrations.
 func Open(ctx context.Context, dataDir string) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o750); err != nil {
 		return nil, fmt.Errorf("create data folder: %w", err)
 	}
-	path := filepath.Join(dataDir, "vexil.db")
+	path := filepath.Join(dataDir, FileName)
 	q := url.Values{}
 	q.Add("_pragma", "journal_mode(WAL)")
 	q.Add("_pragma", "busy_timeout(5000)")

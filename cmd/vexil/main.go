@@ -2,6 +2,7 @@
 //
 //	vexil                 start the server
 //	vexil reset-password  set a new admin password and log out all sessions
+//	vexil backup FILE     write a copy of the database to a new file
 //	vexil healthcheck     ask /readyz and exit with 0 or 1, for Docker
 //	vexil version         print the version
 package main
@@ -17,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"syscall"
@@ -48,6 +50,8 @@ func main() {
 		err = serve(cfg, log)
 	case "reset-password":
 		err = resetPassword(cfg)
+	case "backup":
+		err = backup(cfg, arg(2))
 	case "healthcheck":
 		err = healthcheck(cfg)
 	case "version", "-v", "--version":
@@ -73,7 +77,7 @@ func arg(i int) string {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "Usage:\n  %[1]s                 start the server\n  %[1]s reset-password  set a new admin password\n  %[1]s healthcheck     exit 0 when /readyz answers ok\n  %[1]s version         print the version\n\nEnvironment:\n  VEXIL_ADDR      listen address (default :8080)\n  VEXIL_DATA      data folder (default ./data)\n  VEXIL_BASE_URL  public URL used in notification links\n", brand.Default.Name)
+	fmt.Fprintf(os.Stderr, "Usage:\n  %[1]s                 start the server\n  %[1]s reset-password  set a new admin password\n  %[1]s backup FILE     write a copy of the database to a new file\n  %[1]s healthcheck     exit 0 when /readyz answers ok\n  %[1]s version         print the version\n\nEnvironment:\n  VEXIL_ADDR      listen address (default :8080)\n  VEXIL_DATA      data folder (default ./data)\n  VEXIL_BASE_URL  public URL used in notification links\n", brand.Default.Name)
 }
 
 // versionString returns the release version, or the module version that
@@ -184,6 +188,33 @@ func resetPassword(cfg config.Config) error {
 		return err
 	}
 	fmt.Println("Password updated. All sessions were logged out.")
+	return nil
+}
+
+// backup writes a consistent copy of the database to a new file. It works
+// while the server runs and does not overwrite a file.
+func backup(cfg config.Config, path string) error {
+	if path == "" {
+		return fmt.Errorf("name a new file for the backup, for example: %s backup /data/backup.db", brand.Default.Name)
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	// Open would create an empty database in a wrong folder.
+	if _, err := os.Stat(filepath.Join(cfg.Data, store.FileName)); err != nil {
+		return fmt.Errorf("no database in %s: set VEXIL_DATA to the data folder", cfg.Data)
+	}
+	ctx := context.Background()
+	st, err := store.Open(ctx, cfg.Data)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	if err := st.Backup(ctx, abs); err != nil {
+		return err
+	}
+	fmt.Println("Backup written to " + abs)
 	return nil
 }
 

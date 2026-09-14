@@ -613,6 +613,7 @@ vexil/
 - Releases: GoReleaser. Targets: linux amd64/arm64, darwin amd64/arm64, windows amd64.
 - Docker: multi-stage build, distroless final image, runs as non-root, volume `/data`.
 - The distroless image has no `curl`. The binary has a `vexil healthcheck` subcommand. It calls `/readyz` and exits with code 0 or 1. The Dockerfile uses it in `HEALTHCHECK`.
+- The binary has a `vexil backup <file>` subcommand, next to `vexil reset-password` and `vexil healthcheck`. It writes one consistent copy of the database to a new file with `VACUUM INTO`, also while the server runs. It does not overwrite a file. It prints the path on success. The image has no `sqlite3` and no shell, so the docs use this command, not a copy of the data folder.
 - The README shows a Kubernetes example: `livenessProbe` on `/healthz`, `readinessProbe` on `/readyz`.
 - Docs: a systemd unit file example, a `docker run` one-liner, a `docker compose` example.
 
