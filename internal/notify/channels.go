@@ -143,6 +143,9 @@ func (p *pushover) Send(ctx context.Context, m Message) error {
 		body["priority"] = 2
 		body["retry"] = p.retry * 60
 		body["expire"] = p.expire * 60
+		if !m.Started.IsZero() {
+			body["tags"] = incidentTag(m) // lets Cancel find this alert
+		}
 	}
 	if m.URL != "" {
 		body["url"] = m.URL
@@ -152,6 +155,22 @@ func (p *pushover) Send(ctx context.Context, m Message) error {
 		delete(body, "title")
 	}
 	return postJSON(ctx, p.client, pushoverAPI+"/1/messages.json", body, nil)
+}
+
+// Cancel stops the repeats of the DOWN alert for the incident of m. It does
+// nothing when the switch is off, because those alerts do not repeat.
+func (p *pushover) Cancel(ctx context.Context, m Message) error {
+	if !p.repeat || m.Started.IsZero() {
+		return nil
+	}
+	target := pushoverAPI + "/1/receipts/cancel_by_tag/" + incidentTag(m) + ".json"
+	return postJSON(ctx, p.client, target, map[string]any{"token": p.token}, nil)
+}
+
+// incidentTag names the incident of m by monitor ID and start time, for
+// example "m12-1757599320".
+func incidentTag(m Message) string {
+	return "m" + strconv.FormatInt(m.Monitor.ID, 10) + "-" + strconv.FormatInt(m.Started.Unix(), 10)
 }
 
 // --- Webhook ---

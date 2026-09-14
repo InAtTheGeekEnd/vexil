@@ -34,6 +34,7 @@ type Message struct {
 	Reason     string        // DOWN: the check error
 	At         time.Time     // when the alert happened
 	DownFor    time.Duration // UP: length of the incident, 0 when unknown
+	Started    time.Time     // DOWN and UP: start of the incident, zero when unknown
 	CertExpiry time.Time     // KindCert
 	URL        string        // link to the detail page, "" without a base URL
 	Brand      string        // product name for the test title and footers
@@ -134,6 +135,12 @@ func plural(n int, word string) string {
 // Sender delivers one message to one channel.
 type Sender interface {
 	Send(ctx context.Context, m Message) error
+}
+
+// canceler is a Sender that can stop the repeats of a DOWN alert when the
+// monitor recovers.
+type canceler interface {
+	Cancel(ctx context.Context, m Message) error
 }
 
 // New returns the sender for a channel. The config must be valid.

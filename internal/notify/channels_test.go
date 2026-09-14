@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -51,7 +52,7 @@ func (c *capture) json(t *testing.T) map[string]any {
 	return out
 }
 
-var downMsg = Message{Kind: KindDown, Monitor: testMon, Reason: "HTTP 503", At: testAt, URL: "https://status.example.com/monitors/12"}
+var downMsg = Message{Kind: KindDown, Monitor: testMon, Reason: "HTTP 503", At: testAt, Started: testAt, URL: "https://status.example.com/monitors/12"}
 
 func send(t *testing.T, c store.Channel, m Message) error {
 	t.Helper()
@@ -185,12 +186,14 @@ func TestPushover(t *testing.T) {
 			}
 			_, hasRetry := body["retry"]
 			_, hasExpire := body["expire"]
+			_, hasTags := body["tags"]
 			if tc.priority == 2 {
-				if body["retry"].(float64) != 120 || body["expire"].(float64) != 5400 {
-					t.Fatalf("retry = %v, expire = %v, want 120 and 5400 seconds", body["retry"], body["expire"])
+				wantTag := "m12-" + strconv.FormatInt(testAt.Unix(), 10)
+				if body["retry"].(float64) != 120 || body["expire"].(float64) != 5400 || body["tags"] != wantTag {
+					t.Fatalf("retry = %v, expire = %v, tags = %v, want 120, 5400 and %s", body["retry"], body["expire"], body["tags"], wantTag)
 				}
-			} else if hasRetry || hasExpire {
-				t.Fatalf("normal priority body has retry or expire: %v", body)
+			} else if hasRetry || hasExpire || hasTags {
+				t.Fatalf("normal priority body has retry, expire or tags: %v", body)
 			}
 		})
 	}
@@ -200,6 +203,56 @@ func TestPushover(t *testing.T) {
 	c := store.Channel{Type: store.ChannelPushover, Config: map[string]string{"user": "uUSERKEY", "token": "aAPPTOKEN"}}
 	err := send(t, c, downMsg)
 	if err == nil || err.Error() != "HTTP 400: user identifier is invalid" {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestPushoverCancel(t *testing.T) {
+	ts, cap := newCapture(t)
+	old := pushoverAPI
+	pushoverAPI = ts.URL
+	t.Cleanup(func() { pushoverAPI = old })
+
+	up := Message{Kind: KindUp, Monitor: testMon, At: testAt.Add(3 * time.Minute), Started: testAt}
+	tests := []struct {
+		name     string
+		repeat   string
+		m        Message
+		wantPath string // "" means no request
+	}{
+		{"switch on", "1", up, "/1/receipts/cancel_by_tag/m12-" + strconv.FormatInt(testAt.Unix(), 10) + ".json"},
+		{"switch off", "", up, ""},
+		{"unknown incident start", "1", Message{Kind: KindUp, Monitor: testMon, At: testAt}, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cap.mu.Lock()
+			cap.path, cap.body = "", ""
+			cap.mu.Unlock()
+			s, err := New(store.Channel{Type: store.ChannelPushover, Config: map[string]string{
+				"user": "uUSERKEY", "token": "aAPPTOKEN", "repeat": tc.repeat, "retry": "1", "expire": "60"}}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.(canceler).Cancel(context.Background(), tc.m); err != nil {
+				t.Fatal(err)
+			}
+			cap.mu.Lock()
+			path, body := cap.path, cap.body
+			cap.mu.Unlock()
+			if path != tc.wantPath {
+				t.Fatalf("path = %q, want %q", path, tc.wantPath)
+			}
+			if tc.wantPath != "" && body != `{"token":"aAPPTOKEN"}` {
+				t.Fatalf("body = %s", body)
+			}
+		})
+	}
+
+	// A failed cancel returns the Pushover error.
+	cap.status, cap.reply = http.StatusBadRequest, `{"errors":["application token is invalid"],"status":0}`
+	s, _ := New(store.Channel{Type: store.ChannelPushover, Config: map[string]string{"user": "u", "token": "aAPPTOKEN", "repeat": "1", "retry": "1", "expire": "60"}}, nil)
+	if err := s.(canceler).Cancel(context.Background(), up); err == nil || err.Error() != "HTTP 400: application token is invalid" {
 		t.Fatalf("err = %v", err)
 	}
 }

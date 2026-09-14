@@ -1,13 +1,18 @@
 package notify
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -135,6 +140,122 @@ func TestPushoverDeliveryRetriesAndRedacts(t *testing.T) {
 	}
 }
 
+func TestPushoverCancelOnRecovery(t *testing.T) {
+	var mu sync.Mutex
+	var calls []string
+	failCancel := false
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		defer mu.Unlock()
+		if r.URL.Path == "/1/messages.json" {
+			calls = append(calls, fmt.Sprintf("message priority=%v tags=%v", body["priority"], body["tags"]))
+		} else {
+			calls = append(calls, fmt.Sprintf("cancel %s token=%v", r.URL.Path, body["token"]))
+			if failCancel {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+		}
+		io.WriteString(w, `{"status":1,"request":"x"}`)
+	}))
+	defer ts.Close()
+	old := pushoverAPI
+	pushoverAPI = ts.URL
+	t.Cleanup(func() { pushoverAPI = old })
+	// take returns the requests so far, sorted: the UP alert and the cancel
+	// run at the same time.
+	take := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		out := calls
+		calls = nil
+		sort.Strings(out)
+		return strings.Join(out, "\n")
+	}
+
+	const (
+		downReq   = "message priority=2 tags={tag}"
+		plainReq  = "message priority=0 tags=<nil>"
+		cancelReq = "cancel /1/receipts/cancel_by_tag/{tag}.json token=aAPPTOKEN"
+	)
+	tests := []struct {
+		name       string
+		repeat     string
+		failCancel bool
+		closeFirst bool     // the monitor recovers before the DOWN alert goes out
+		wantDown   []string // requests for the DOWN event, sorted
+		wantUp     []string // requests for the UP event, sorted; nil skips the UP event
+		wantSleeps int
+	}{
+		{"switch on", "1", false, false, []string{downReq}, []string{cancelReq, plainReq}, 0},
+		{"cancel fails", "1", true, false, []string{downReq}, []string{cancelReq, cancelReq, cancelReq, cancelReq, plainReq}, 3},
+		{"switch off", "", false, false, []string{plainReq}, []string{plainReq}, 0},
+		{"recovered before the DOWN alert went out", "1", false, true, []string{cancelReq, downReq}, nil, 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s, st, slept := newTestService(t)
+			var logs bytes.Buffer
+			s.log = slog.New(slog.NewTextHandler(&logs, nil))
+			ctx := context.Background()
+			mon := &store.Monitor{Name: "API", Type: store.TypeHTTP, Target: "https://api.example.com"}
+			if err := st.CreateMonitor(ctx, mon); err != nil {
+				t.Fatal(err)
+			}
+			ch := &store.Channel{Type: store.ChannelPushover, Name: "Phone", Enabled: true, Config: map[string]string{
+				"user": "uUSERKEY", "token": "aAPPTOKEN", "repeat": tc.repeat, "retry": "1", "expire": "60"}}
+			if err := st.CreateChannel(ctx, ch); err != nil {
+				t.Fatal(err)
+			}
+			mu.Lock()
+			failCancel, calls = tc.failCancel, nil
+			mu.Unlock()
+			tag := fmt.Sprintf("m%d-%d", mon.ID, testAt.Unix())
+			want := func(reqs []string) string {
+				return strings.ReplaceAll(strings.Join(reqs, "\n"), "{tag}", tag)
+			}
+			upAt := testAt.Add(3 * time.Minute)
+
+			// The engine opens the incident before it sends the DOWN event,
+			// and closes it before it sends the UP event.
+			if _, err := st.OpenIncident(ctx, mon.ID, testAt, "HTTP 503"); err != nil {
+				t.Fatal(err)
+			}
+			if tc.closeFirst {
+				if err := st.CloseIncident(ctx, mon.ID, upAt); err != nil {
+					t.Fatal(err)
+				}
+			}
+			s.Notify(ctx, engine.Event{MonitorID: mon.ID, Alert: engine.AlertDown, At: testAt, Result: check.Result{Error: "HTTP 503"}})
+			s.Wait()
+			if got := take(); got != want(tc.wantDown) {
+				t.Fatalf("DOWN requests:\n%s\nwant:\n%s", got, want(tc.wantDown))
+			}
+			if tc.wantUp != nil {
+				if err := st.CloseIncident(ctx, mon.ID, upAt); err != nil {
+					t.Fatal(err)
+				}
+				s.Notify(ctx, engine.Event{MonitorID: mon.ID, Alert: engine.AlertUp, At: upAt})
+				s.Wait()
+				if got := take(); got != want(tc.wantUp) {
+					t.Fatalf("UP requests:\n%s\nwant:\n%s", got, want(tc.wantUp))
+				}
+			}
+			if len(*slept) != tc.wantSleeps {
+				t.Fatalf("sleeps = %v, want %d", *slept, tc.wantSleeps)
+			}
+			if c, _ := st.Channel(ctx, ch.ID); c.LastError != "" {
+				t.Fatalf("channel error = %q, want none: a cancel does not set it", c.LastError)
+			}
+			if logged := strings.Contains(logs.String(), `msg="alert cancel failed"`); logged != tc.failCancel {
+				t.Fatalf("cancel failure logged = %v, want %v", logged, tc.failCancel)
+			}
+		})
+	}
+}
+
 func TestMessageFromEvent(t *testing.T) {
 	s, st, _ := newTestService(t)
 	ctx := context.Background()
@@ -152,7 +273,7 @@ func TestMessageFromEvent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if up.Kind != KindUp || up.DownFor != 4*time.Minute+12*time.Second || up.URL != "https://status.example.com/monitors/"+strconv.FormatInt(m.ID, 10) || up.Brand != "Acme Watch" {
+	if up.Kind != KindUp || up.DownFor != 4*time.Minute+12*time.Second || !up.Started.Equal(testAt.Add(-4*time.Minute-12*time.Second)) || up.URL != "https://status.example.com/monitors/"+strconv.FormatInt(m.ID, 10) || up.Brand != "Acme Watch" {
 		t.Fatalf("up message = %+v", up)
 	}
 	expiry := testAt.Add(10 * 24 * time.Hour)

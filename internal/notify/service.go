@@ -112,6 +112,14 @@ func (s *Service) message(ctx context.Context, ev engine.Event) (Message, error)
 	switch ev.Alert {
 	case engine.AlertDown:
 		m.Kind, m.Reason = KindDown, ev.Result.Error
+		// The engine opens the incident before it sends the event.
+		incidents, err := s.store.Incidents(ctx, mon.ID, 1)
+		if err != nil {
+			return Message{}, err
+		}
+		if len(incidents) == 1 {
+			m.Started = incidents[0].StartedAt
+		}
 	case engine.AlertUp:
 		m.Kind = KindUp
 		incidents, err := s.store.Incidents(ctx, mon.ID, 1)
@@ -119,6 +127,7 @@ func (s *Service) message(ctx context.Context, ev engine.Event) (Message, error)
 			return Message{}, err
 		}
 		if len(incidents) == 1 && !incidents[0].Open() {
+			m.Started = incidents[0].StartedAt
 			m.DownFor = incidents[0].EndedAt.Sub(incidents[0].StartedAt)
 		}
 	case engine.AlertCert:
@@ -130,36 +139,79 @@ func (s *Service) message(ctx context.Context, ev engine.Event) (Message, error)
 }
 
 // deliver sends m to one channel with retries. The last failure is logged
-// and stored on the channel; a success clears it.
+// and stored on the channel; a success clears it. On a channel that can
+// cancel, an UP alert also stops the repeats of the DOWN alert.
 func (s *Service) deliver(ctx context.Context, c store.Channel, m Message) {
 	sender, err := New(c, s.client)
 	if err != nil {
 		s.fail(ctx, c, err.Error())
 		return
 	}
-	var last string
-	for attempt := 0; ; attempt++ {
-		actx, cancel := context.WithTimeout(ctx, sendTimeout)
-		err := sender.Send(actx, m)
-		cancel()
-		if err == nil {
-			if c.LastError != "" || attempt > 0 {
-				if err := s.store.SetChannelError(ctx, c.ID, "", time.Time{}); err != nil {
-					s.log.Error("clear channel error", "channel", c.ID, "err", err)
-				}
-			}
-			return
+	cn, cancels := sender.(canceler)
+	if cancels && m.Kind == KindUp {
+		// The cancel runs on its own, so its retries do not hold back the
+		// UP alert.
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			s.cancel(ctx, c, cn, m)
+		}()
+	}
+	failed, err := s.withRetries(ctx, c, "alert delivery", func(ctx context.Context) error { return sender.Send(ctx, m) })
+	if err != nil {
+		if ctx.Err() == nil {
+			s.fail(ctx, c, err.Error())
 		}
-		last = Redact(err.Error(), Secrets(c))
-		if attempt >= len(retryDelays) {
-			break
-		}
-		s.log.Warn("alert delivery failed, will retry", "channel", c.ID, "name", c.Name, "attempt", attempt+1, "err", last)
-		if !s.sleep(ctx, retryDelays[attempt]) {
-			return
+		return
+	}
+	if c.LastError != "" || failed > 0 {
+		if err := s.store.SetChannelError(ctx, c.ID, "", time.Time{}); err != nil {
+			s.log.Error("clear channel error", "channel", c.ID, "err", err)
 		}
 	}
-	s.fail(ctx, c, last)
+	if cancels && m.Kind == KindDown && s.recovered(ctx, m) {
+		// The monitor came back while this alert was on its way, so the
+		// cancel of the UP alert can have run too early.
+		s.cancel(ctx, c, cn, m)
+	}
+}
+
+// withRetries calls send until it works, with the waits from SPEC.md
+// section 7.4. It returns the number of failed attempts and the last error
+// with secrets redacted, or nil on success. It returns ctx.Err() when ctx
+// ends during a wait.
+func (s *Service) withRetries(ctx context.Context, c store.Channel, what string, send func(context.Context) error) (int, error) {
+	for attempt := 0; ; attempt++ {
+		actx, cancel := context.WithTimeout(ctx, sendTimeout)
+		err := send(actx)
+		cancel()
+		if err == nil {
+			return attempt, nil
+		}
+		last := Redact(err.Error(), Secrets(c))
+		if attempt >= len(retryDelays) {
+			return attempt + 1, errors.New(last)
+		}
+		s.log.Warn(what+" failed, will retry", "channel", c.ID, "name", c.Name, "attempt", attempt+1, "err", last)
+		if !s.sleep(ctx, retryDelays[attempt]) {
+			return attempt + 1, ctx.Err()
+		}
+	}
+}
+
+// cancel stops the repeats of the DOWN alert for the incident of m. A
+// failure is only logged. The channel error shows alert deliveries only.
+func (s *Service) cancel(ctx context.Context, c store.Channel, cn canceler, m Message) {
+	_, err := s.withRetries(ctx, c, "alert cancel", func(ctx context.Context) error { return cn.Cancel(ctx, m) })
+	if err != nil && ctx.Err() == nil {
+		s.log.Error("alert cancel failed", "channel", c.ID, "name", c.Name, "type", c.Type, "err", err.Error())
+	}
+}
+
+// recovered reports whether the incident of a DOWN message has ended.
+func (s *Service) recovered(ctx context.Context, m Message) bool {
+	incidents, err := s.store.Incidents(ctx, m.Monitor.ID, 1)
+	return err == nil && len(incidents) == 1 && !incidents[0].Open() && incidents[0].StartedAt.Equal(m.Started)
 }
 
 func (s *Service) fail(ctx context.Context, c store.Channel, msg string) {

@@ -261,6 +261,8 @@ Slack and Discord use their rich formats (color bar in the status color). Email 
 
 Pushover sends every message with normal priority (0). When "Repeat until acknowledged" is on, DOWN alerts use emergency priority (2): Pushover repeats the alert at the retry interval until the user acknowledges it or the expiry time ends. UP alerts, certificate warnings and test messages always use normal priority, never emergency.
 
+When the monitor comes back UP, vexil cancels the repeats of its DOWN alert. vexil stores no Pushover receipt. Instead, the emergency DOWN alert carries one Pushover tag (the `tags` parameter) in the form `m<monitor ID>-<incident start in unix seconds>`, for example `m12-1757599320`. On the UP transition, each Pushover channel with the switch on calls `POST /1/receipts/cancel_by_tag/<tag>.json` with its application token. If the switch is off at that time, vexil does not cancel, and the alert repeats until its expiry time. A failed cancel gets the retries from 7.4 and is then logged. It does not hold back the UP alert. If the monitor recovers before the DOWN alert is delivered, vexil cancels right after the delivery.
+
 ### 7.3 Webhook payload
 
 ```json
