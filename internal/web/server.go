@@ -11,6 +11,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -420,12 +421,29 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 // --- Helpers ---
 
+// clientIP returns the address that the login limit counts. Behind a
+// reverse proxy on a loopback or private address, it is the rightmost
+// address in X-Forwarded-For, which the proxy appends. A client on the
+// internet connects from a public address, so an X-Forwarded-For header
+// that it sends itself does not count.
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
 	}
-	return host
+	forwarded := r.Header.Values("X-Forwarded-For")
+	if len(forwarded) == 0 || !trustedProxy(r.RemoteAddr) {
+		return host
+	}
+	last := forwarded[len(forwarded)-1]
+	if i := strings.LastIndexByte(last, ','); i >= 0 {
+		last = last[i+1:]
+	}
+	ip, err := netip.ParseAddr(strings.TrimSpace(last))
+	if err != nil {
+		return host
+	}
+	return ip.Unmap().String()
 }
 
 func capitalize(s string) string {

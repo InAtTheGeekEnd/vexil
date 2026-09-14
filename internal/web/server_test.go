@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -408,6 +409,81 @@ func TestLoginRateLimit(t *testing.T) {
 	s.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("other IP: status %d, want 401", rec.Code)
+	}
+}
+
+// TestClientIP checks the address that the login limit counts.
+// X-Forwarded-For counts only from a loopback or private address, and only
+// its rightmost entry, which the proxy wrote.
+func TestClientIP(t *testing.T) {
+	tests := []struct {
+		name       string
+		remoteAddr string
+		forwarded  []string
+		want       string
+	}{
+		{"direct public client", "203.0.113.7:1234", nil, "203.0.113.7"},
+		{"public client forges the header", "203.0.113.7:1234", []string{"198.51.100.9"}, "203.0.113.7"},
+		{"proxied client", "127.0.0.1:4321", []string{"198.51.100.9"}, "198.51.100.9"},
+		{"proxied client with a forged entry first", "127.0.0.1:4321", []string{"192.0.2.1, 198.51.100.9"}, "198.51.100.9"},
+		{"proxy on a private network", "172.18.0.1:4321", []string{"198.51.100.9"}, "198.51.100.9"},
+		{"last header line counts", "10.0.0.2:4321", []string{"192.0.2.1", "198.51.100.9"}, "198.51.100.9"},
+		{"ipv6 proxied client", "[::1]:4321", []string{"2001:db8::7"}, "2001:db8::7"},
+		{"proxy without the header", "127.0.0.1:4321", nil, "127.0.0.1"},
+		{"proxy with a bad header", "127.0.0.1:4321", []string{"unknown"}, "127.0.0.1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/login", nil)
+			req.RemoteAddr = tt.remoteAddr
+			for _, v := range tt.forwarded {
+				req.Header.Add("X-Forwarded-For", v)
+			}
+			if got := clientIP(req); got != tt.want {
+				t.Fatalf("clientIP = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestLoginRateLimitBehindProxy runs the login limit behind a reverse proxy
+// on 127.0.0.1. One client that uses up its attempts must not lock out
+// another client, and a public client must not escape the limit with a
+// forged header.
+func TestLoginRateLimitBehindProxy(t *testing.T) {
+	s, st := newTestServer(t, Options{})
+	setPassword(t, st)
+	login := func(remoteAddr, forwarded, password string) int {
+		t.Helper()
+		form := url.Values{"password": {password}}
+		req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.RemoteAddr = remoteAddr
+		req.Header.Set("X-Forwarded-For", forwarded)
+		rec := httptest.NewRecorder()
+		s.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	for i := 1; i <= 6; i++ {
+		want := http.StatusUnauthorized
+		if i > 5 {
+			want = http.StatusTooManyRequests
+		}
+		if code := login("127.0.0.1:4321", "203.0.113.7", "wrong wrong wrong"); code != want {
+			t.Fatalf("attacker attempt %d through the proxy = %d, want %d", i, code, want)
+		}
+	}
+	if code := login("127.0.0.1:4321", "198.51.100.9", testPassword); code != http.StatusSeeOther {
+		t.Fatalf("admin login through the proxy = %d, want 303", code)
+	}
+	for i := 1; i <= 6; i++ {
+		want := http.StatusUnauthorized
+		if i > 5 {
+			want = http.StatusTooManyRequests
+		}
+		if code := login("192.0.2.50:1234", "10.0.0."+strconv.Itoa(i), "wrong wrong wrong"); code != want {
+			t.Fatalf("public attempt %d with a forged header = %d, want %d", i, code, want)
+		}
 	}
 }
 
