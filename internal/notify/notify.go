@@ -280,7 +280,7 @@ func Validate(c store.Channel) map[string]string {
 			}
 		case "email":
 			if _, err := mail.ParseAddress(v); err != nil {
-				errs[f.Key] = "Enter one email address."
+				errs[f.Key] = "Enter one email address, like alerts@example.com or Alerts <alerts@example.com>."
 			}
 		case "number":
 			n, err := strconv.Atoi(v)

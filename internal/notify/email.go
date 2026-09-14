@@ -9,6 +9,7 @@ import (
 	"html/template"
 	"mime"
 	"net"
+	"net/mail"
 	"net/smtp"
 	"strings"
 	"time"
@@ -28,6 +29,14 @@ type email struct {
 // Every other port starts plain and upgrades with STARTTLS when the server
 // offers it. A login over a plain connection is refused.
 func (e *email) Send(ctx context.Context, m Message) error {
+	from, err := envelopeAddress(e.from)
+	if err != nil {
+		return err
+	}
+	to, err := envelopeAddress(e.to)
+	if err != nil {
+		return err
+	}
 	d := net.Dialer{Timeout: 15 * time.Second}
 	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(e.host, e.port))
 	if err != nil {
@@ -67,10 +76,10 @@ func (e *email) Send(ctx context.Context, m Message) error {
 			return smtpError(err)
 		}
 	}
-	if err := c.Mail(e.from); err != nil {
+	if err := c.Mail(from); err != nil {
 		return smtpError(err)
 	}
-	if err := c.Rcpt(e.to); err != nil {
+	if err := c.Rcpt(to); err != nil {
 		return smtpError(err)
 	}
 	w, err := c.Data()
@@ -103,8 +112,8 @@ func smtpError(err error) error {
 func (e *email) body(m Message) []byte {
 	var b bytes.Buffer
 	boundary := "vx" + fmt.Sprintf("%d", m.At.UnixNano())
-	fmt.Fprintf(&b, "From: %s\r\n", e.from)
-	fmt.Fprintf(&b, "To: %s\r\n", e.to)
+	fmt.Fprintf(&b, "From: %s\r\n", headerAddress(e.from))
+	fmt.Fprintf(&b, "To: %s\r\n", headerAddress(e.to))
 	fmt.Fprintf(&b, "Subject: %s\r\n", mime.QEncoding.Encode("utf-8", m.Title()))
 	fmt.Fprintf(&b, "Date: %s\r\n", m.At.Format(time.RFC1123Z))
 	fmt.Fprintf(&b, "MIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=%q\r\n\r\n", boundary)
@@ -115,6 +124,26 @@ func (e *email) body(m Message) []byte {
 	b.WriteString(crlf(html.String()))
 	fmt.Fprintf(&b, "\r\n--%s--\r\n", boundary)
 	return b.Bytes()
+}
+
+// envelopeAddress returns the bare address of a From or To value, for MAIL
+// FROM and RCPT TO. The value can carry a display name, as in
+// "Alerts <alerts@example.com>".
+func envelopeAddress(s string) (string, error) {
+	a, err := mail.ParseAddress(s)
+	if err != nil {
+		return "", fmt.Errorf("%q is not a valid email address, so the mail cannot be sent", s)
+	}
+	return a.Address, nil
+}
+
+// headerAddress formats a From or To value for the mail header. It keeps
+// the display name and encodes it when it is not plain ASCII.
+func headerAddress(s string) string {
+	if a, err := mail.ParseAddress(s); err == nil {
+		return a.String()
+	}
+	return s
 }
 
 func crlf(s string) string {

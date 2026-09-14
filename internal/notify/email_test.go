@@ -25,11 +25,12 @@ type fakeSMTP struct {
 	cert     tls.Certificate
 	data     chan string // the DATA body
 	authSeen chan string
+	envelope chan string // the MAIL and RCPT lines
 }
 
 func newFakeSMTP(t *testing.T, mode string) (*fakeSMTP, string) {
 	t.Helper()
-	f := &fakeSMTP{mode: mode, cert: selfSigned(t), data: make(chan string, 1), authSeen: make(chan string, 1)}
+	f := &fakeSMTP{mode: mode, cert: selfSigned(t), data: make(chan string, 1), authSeen: make(chan string, 1), envelope: make(chan string, 2)}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -80,6 +81,10 @@ func (f *fakeSMTP) serve(conn net.Conn) {
 			f.authSeen <- strings.TrimSpace(line)
 			w("235 ok")
 		case strings.HasPrefix(cmd, "MAIL"), strings.HasPrefix(cmd, "RCPT"):
+			select {
+			case f.envelope <- strings.TrimSpace(line):
+			default:
+			}
 			w("250 ok")
 		case cmd == "DATA":
 			w("354 go")
@@ -172,6 +177,67 @@ func TestEmail(t *testing.T) {
 				default:
 					t.Fatal("no AUTH sent")
 				}
+			}
+		})
+	}
+}
+
+// TestEmailAddresses sends mail with From and To values with and without a
+// display name. MAIL FROM and RCPT TO must carry the bare address, and the
+// headers must keep the name.
+func TestEmailAddresses(t *testing.T) {
+	tests := []struct {
+		name, from, to     string
+		wantMail, wantRcpt string
+		wantFrom, wantTo   string
+		wantErr            string
+	}{
+		{name: "bare addresses", from: "a@example.com", to: "b@example.com",
+			wantMail: "MAIL FROM:<a@example.com>", wantRcpt: "RCPT TO:<b@example.com>",
+			wantFrom: "From: <a@example.com>\r\n", wantTo: "To: <b@example.com>\r\n"},
+		{name: "display names", from: "Alerts Bot <alerts@example.com>", to: "Ops Team <ops@example.com>",
+			wantMail: "MAIL FROM:<alerts@example.com>", wantRcpt: "RCPT TO:<ops@example.com>",
+			wantFrom: "From: \"Alerts Bot\" <alerts@example.com>\r\n", wantTo: "To: \"Ops Team\" <ops@example.com>\r\n"},
+		{name: "non-ASCII display name", from: "Überwachung <u@example.com>", to: "<b@example.com>",
+			wantMail: "MAIL FROM:<u@example.com>", wantRcpt: "RCPT TO:<b@example.com>",
+			wantFrom: "From: =?utf-8?q?=C3=9Cberwachung?= <u@example.com>\r\n", wantTo: "To: <b@example.com>\r\n"},
+		{name: "bad from", from: "not an address", to: "b@example.com", wantErr: "not a valid email address"},
+		{name: "bad to", from: "a@example.com", to: "a@example.com, b@example.com", wantErr: "not a valid email address"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f, addr := newFakeSMTP(t, "plain")
+			host, port, _ := net.SplitHostPort(addr)
+			e := &email{host: host, port: port, from: tc.from, to: tc.to}
+			err := e.Send(context.Background(), downMsg)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{tc.wantMail, tc.wantRcpt} {
+				select {
+				case got := <-f.envelope:
+					if got != want {
+						t.Errorf("envelope line = %q, want %q", got, want)
+					}
+				case <-time.After(2 * time.Second):
+					t.Fatalf("no envelope line, want %q", want)
+				}
+			}
+			select {
+			case body := <-f.data:
+				for _, want := range []string{tc.wantFrom, tc.wantTo} {
+					if !strings.Contains(body, want) {
+						t.Errorf("mail lacks the header %q", want)
+					}
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("no mail received")
 			}
 		})
 	}
