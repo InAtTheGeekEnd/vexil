@@ -164,6 +164,8 @@ func TestMonitorFormValidation(t *testing.T) {
 		{"ping bracketed ipv6", url.Values{"type": {"ping"}, "host": {"[::1]"}, "interval": {"60"}}, "without http:// or a port"},
 		{"dns hostname with a path", url.Values{"type": {"dns"}, "hostname": {"https://example.com/x"}, "interval": {"60"}}, "without http:// or a port"},
 		{"dns hostname with a port", url.Values{"type": {"dns"}, "hostname": {"example.com:53"}, "interval": {"60"}}, "without http:// or a port"},
+		{"dns bare ipv4 address", url.Values{"type": {"dns"}, "hostname": {"93.184.215.14"}, "interval": {"60"}}, "not an IP address"},
+		{"dns bare ipv6 address", url.Values{"type": {"dns"}, "hostname": {"2001:db8::1"}, "interval": {"60"}}, "not an IP address"},
 		{"bad interval", url.Values{"type": {"push"}, "name": {"Job"}, "interval": {"45"}}, "Choose an interval"},
 		{"push without name", url.Values{"type": {"push"}, "interval": {"60"}}, "Enter a name"},
 		{"name too long", url.Values{"type": {"push"}, "name": {strings.Repeat("a", 61)}, "interval": {"60"}}, "60 characters or fewer"},

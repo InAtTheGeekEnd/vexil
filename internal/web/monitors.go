@@ -576,6 +576,10 @@ func (f *monitorForm) validate() store.Monitor {
 	case store.TypeDNS:
 		if f.Hostname == "" {
 			f.Errors["hostname"] = "Enter a host name."
+		} else if net.ParseIP(f.Hostname) != nil {
+			// The resolver returns an IP address unchanged, so the monitor
+			// would be UP for ever and check nothing.
+			f.Errors["hostname"] = "Enter a host name, not an IP address. A DNS check needs a name to look up."
 		} else if !bareHost(f.Hostname, false) {
 			f.Errors["hostname"] = "Enter a host name, without http:// or a port."
 		} else {
