@@ -120,7 +120,7 @@ func (s *Server) routes() http.Handler {
 
 	mux.Handle("GET /{$}", s.requireAdmin(http.HandlerFunc(s.handleDashboard)))
 	mux.Handle("GET /styleguide", s.requireAdmin(http.HandlerFunc(s.handleStyleguide)))
-	mux.Handle("GET /events", s.requireAdmin(http.HandlerFunc(s.handleEvents)))
+	mux.Handle("GET /events", s.requireSession(http.HandlerFunc(s.handleEvents)))
 	admin := map[string]http.HandlerFunc{
 		"GET /monitors/new":               s.handleMonitorNewForm,
 		"POST /monitors/new":              s.handleMonitorCreate,
@@ -186,6 +186,24 @@ func (s *Server) requireAdmin(next http.Handler) http.Handler {
 		}
 		if !ok {
 			http.Redirect(w, r, "/login", http.StatusFound)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// requireSession is requireAdmin for the event stream. An EventSource cannot
+// show a login page, so a request without a valid session gets 401 and the
+// page marks its data as old.
+func (s *Server) requireSession(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ok, err := s.loggedIn(r)
+		if err != nil {
+			s.serverError(w, err)
+			return
+		}
+		if !ok {
+			http.Error(w, "log in first", http.StatusUnauthorized)
 			return
 		}
 		next.ServeHTTP(w, r)

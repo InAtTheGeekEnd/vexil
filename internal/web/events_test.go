@@ -2,6 +2,7 @@ package web
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -131,8 +132,19 @@ func TestEventsNeedLogin(t *testing.T) {
 	setPassword(t, st)
 	ts := httptest.NewServer(s)
 	t.Cleanup(ts.Close)
+	// An EventSource cannot follow a redirect to the login page, so the
+	// stream answers 401 and the page shows that its data is old.
 	res := get(t, client(t), ts.URL+"/events")
-	if res.StatusCode != http.StatusFound || res.Header.Get("Location") != "/login" {
-		t.Fatalf("anonymous /events = %d -> %q", res.StatusCode, res.Header.Get("Location"))
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("anonymous /events = %d, want 401", res.StatusCode)
+	}
+
+	// A session that ends, as on logout or a password change, gets 401 too.
+	ts2, c := loggedIn(t, s, st)
+	if err := st.DeleteAllSessions(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if res := get(t, c, ts2.URL+"/events"); res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("/events after the session ended = %d, want 401", res.StatusCode)
 	}
 }

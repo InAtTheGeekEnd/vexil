@@ -4,8 +4,13 @@ package web
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -64,6 +69,120 @@ func TestStripOrderInChrome(t *testing.T) {
 		t.Fatalf("strip live = %s, after a reload = %s, want %s for both", live, reloaded, want)
 	}
 }
+
+// TestStaleWhenSessionEndsInChrome ends the session while the dashboard is
+// open and drops the event stream. The stream then gets 401, so the page
+// must gray its dots, stop the pulse and say that its data is old. A new
+// login lets the stream open again, and the stale state must go.
+func TestStaleWhenSessionEndsInChrome(t *testing.T) {
+	path := requireChrome(t)
+	s, st, _ := seedServer(t, seed{name: "Alpha"})
+	setPassword(t, st)
+	ctx := context.Background()
+
+	// The wrapper adds the current session to each request, can end every
+	// open stream as a lost connection would, and counts refused streams.
+	var mu sync.Mutex
+	var cookies []*http.Cookie
+	drop := make(chan struct{})
+	var refused atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		for _, ck := range cookies {
+			r.AddCookie(ck)
+		}
+		stop := drop
+		mu.Unlock()
+		if r.URL.Path != "/events" {
+			s.ServeHTTP(w, r)
+			return
+		}
+		rctx, cancel := context.WithCancel(r.Context())
+		defer cancel()
+		go func() {
+			select {
+			case <-stop:
+				cancel()
+			case <-rctx.Done():
+			}
+		}()
+		cw := &codeWriter{ResponseWriter: w}
+		s.ServeHTTP(cw, r.WithContext(rctx))
+		if cw.code == http.StatusUnauthorized {
+			refused.Add(1)
+		}
+	}))
+	t.Cleanup(ts.Close)
+	login := func() {
+		t.Helper()
+		c := client(t)
+		if res := postForm(t, c, ts.URL+"/login", url.Values{"password": {testPassword}}); res.StatusCode != http.StatusSeeOther {
+			t.Fatalf("login = %d", res.StatusCode)
+		}
+		u, _ := url.Parse(ts.URL)
+		mu.Lock()
+		cookies = c.Jar.Cookies(u)
+		mu.Unlock()
+	}
+	login()
+
+	page, session := openPage(t, path, ts.URL+"/", "light", liveOpen)
+	waitLive(t, page, session)
+	const stale = "document.body.classList.contains('stale') && !!document.querySelector('.stale-line')"
+	var fresh bool
+	if page.eval(session, "!("+stale+")", &fresh); !fresh {
+		t.Fatal("the page is stale while its stream is open")
+	}
+
+	if err := st.DeleteAllSessions(ctx); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	close(drop)
+	drop = make(chan struct{})
+	mu.Unlock()
+	poll(t, "a refused stream after the session ended", func() (bool, string) {
+		n := refused.Load()
+		return n > 0, strconv.Itoa(int(n)) + " refused"
+	})
+
+	dot := "document.querySelector('.mon-row .dot')"
+	waitFor(t, page, session, stale, "document.body.className", "the stale state")
+	checks := map[string]string{
+		// --paused in the light theme is #9CA3AF.
+		"getComputedStyle(" + dot + ").backgroundColor":                       "rgb(156, 163, 175)",
+		"getComputedStyle(" + dot + ", '::before').animationName":             "none",
+		"getComputedStyle(document.querySelector('h1 .dot')).backgroundColor": "rgb(156, 163, 175)",
+		"document.querySelector('.stale-line a').getAttribute('href')":        "/login",
+		"document.querySelector('.stale-line').textContent":                   "The connection is lost. The data on this page is old.Log in again",
+	}
+	for expr, want := range checks {
+		var got string
+		if page.eval(session, "String("+expr+")", &got); got != want {
+			t.Errorf("%s = %q, want %q", expr, got, want)
+		}
+	}
+
+	// A new session lets the retry open the stream, which clears the stale
+	// state. The retry waits up to 20 seconds.
+	var ok bool
+	page.eval(session, "(window.probeLive = false, true)", &ok)
+	login()
+	waitFor(t, page, session, "window.probeLive === true && !("+stale+")", "document.body.className", "the stream to open again and the stale state to go")
+}
+
+// codeWriter records the status code of a response.
+type codeWriter struct {
+	http.ResponseWriter
+	code int
+}
+
+func (w *codeWriter) WriteHeader(code int) {
+	w.code = code
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *codeWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 // TestGroupDropTargetInChrome drags a group with the mouse and drops it over
 // the rows of another group, not over its heading. The group must land
