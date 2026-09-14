@@ -748,13 +748,16 @@ body.auth {
 .mon-form[data-type="ping"] .for-ping,
 .mon-form[data-type="dns"] .for-dns,
 .mon-form[data-type="push"] .for-push { display: block; }
-.type-form .for-email, .type-form .for-slack, .type-form .for-discord, .type-form .for-telegram, .type-form .for-ntfy, .type-form .for-webhook { display: none; }
+.type-form .for-email, .type-form .for-slack, .type-form .for-discord, .type-form .for-telegram, .type-form .for-ntfy, .type-form .for-pushover, .type-form .for-webhook { display: none; }
 .type-form[data-type="email"] .for-email,
 .type-form[data-type="slack"] .for-slack,
 .type-form[data-type="discord"] .for-discord,
 .type-form[data-type="telegram"] .for-telegram,
 .type-form[data-type="ntfy"] .for-ntfy,
+.type-form[data-type="pushover"] .for-pushover,
 .type-form[data-type="webhook"] .for-webhook { display: flex; }
+/* The retry fields count only when "Repeat until acknowledged" is on. */
+.for-pushover:not(:has([name="pushover_repeat"]:checked)) [data-needs="repeat"] { display: none; }
 .secret { display: flex; align-items: center; gap: 12px; }
 .secret-mask { display: inline-flex; align-items: center; flex: 1; color: var(--muted); letter-spacing: 0.1em; }
 

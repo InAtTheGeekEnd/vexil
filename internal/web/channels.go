@@ -150,6 +150,11 @@ func newChannelForm() channelForm {
 	for _, t := range notify.Types {
 		f.Types = append(f.Types, channelType{t.Type, t.Label, t.Description})
 		f.Fields[t.Type] = notify.Fields(t.Type)
+		for _, fd := range f.Fields[t.Type] {
+			if fd.Default != "" {
+				f.Values[fd.Key] = fd.Default
+			}
+		}
 	}
 	return f
 }
@@ -164,7 +169,9 @@ func formFromChannel(c store.Channel) channelForm {
 			f.HasKeys[fd.Key] = c.Config[fd.Key] != ""
 			continue
 		}
-		f.Values[fd.Key] = c.Config[fd.Key]
+		if v := c.Config[fd.Key]; v != "" || fd.Default == "" {
+			f.Values[fd.Key] = v
+		}
 	}
 	return f
 }

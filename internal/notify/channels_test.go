@@ -144,6 +144,66 @@ func TestNtfy(t *testing.T) {
 	}
 }
 
+func TestPushover(t *testing.T) {
+	ts, cap := newCapture(t)
+	old := pushoverAPI
+	pushoverAPI = ts.URL
+	t.Cleanup(func() { pushoverAPI = old })
+
+	up := Message{Kind: KindUp, Monitor: testMon, At: testAt, DownFor: 252 * time.Second}
+	cert := Message{Kind: KindCert, Monitor: testMon, At: testAt, CertExpiry: testAt.Add(5 * 24 * time.Hour)}
+	test := Message{Kind: KindTest, Brand: "Acme Watch", At: testAt}
+	tests := []struct {
+		name      string
+		repeat    string
+		m         Message
+		priority  float64
+		wantTitle string // "" means the title goes into the message
+	}{
+		{"down", "", downMsg, 0, "🔴 API is down"},
+		{"down with repeat", "1", downMsg, 2, "🔴 API is down"},
+		{"up with repeat", "1", up, 0, "🟢 API is up again"},
+		{"cert with repeat", "1", cert, 0, ""},
+		{"test with repeat", "1", test, 0, "🔔 Test message from Acme Watch"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := store.Channel{Type: store.ChannelPushover, Config: map[string]string{
+				"user": "uUSERKEY", "token": "aAPPTOKEN", "repeat": tc.repeat, "retry": "2", "expire": "90"}}
+			if err := send(t, c, tc.m); err != nil {
+				t.Fatal(err)
+			}
+			body := cap.json(t)
+			if cap.path != "/1/messages.json" {
+				t.Fatalf("path = %q", cap.path)
+			}
+			if body["token"] != "aAPPTOKEN" || body["user"] != "uUSERKEY" || body["priority"].(float64) != tc.priority || body["message"] == "" {
+				t.Fatalf("body = %v", body)
+			}
+			if title, _ := body["title"].(string); title != tc.wantTitle {
+				t.Fatalf("title = %q, want %q", title, tc.wantTitle)
+			}
+			_, hasRetry := body["retry"]
+			_, hasExpire := body["expire"]
+			if tc.priority == 2 {
+				if body["retry"].(float64) != 120 || body["expire"].(float64) != 5400 {
+					t.Fatalf("retry = %v, expire = %v, want 120 and 5400 seconds", body["retry"], body["expire"])
+				}
+			} else if hasRetry || hasExpire {
+				t.Fatalf("normal priority body has retry or expire: %v", body)
+			}
+		})
+	}
+
+	// A Pushover error carries an errors list.
+	cap.status, cap.reply = http.StatusBadRequest, `{"user":"invalid","errors":["user identifier is invalid"],"status":0,"request":"x"}`
+	c := store.Channel{Type: store.ChannelPushover, Config: map[string]string{"user": "uUSERKEY", "token": "aAPPTOKEN"}}
+	err := send(t, c, downMsg)
+	if err == nil || err.Error() != "HTTP 400: user identifier is invalid" {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestWebhook(t *testing.T) {
 	ts, cap := newCapture(t)
 	c := store.Channel{Type: store.ChannelWebhook, Config: map[string]string{"url": ts.URL + "/hook?key=SECRET"}}

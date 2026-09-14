@@ -120,6 +120,84 @@ func TestChannelLifecycle(t *testing.T) {
 	}
 }
 
+func TestPushoverChannelForm(t *testing.T) {
+	s, st := newTestServer(t, Options{})
+	ts, c := loggedIn(t, s, st)
+	ctx := context.Background()
+
+	// The form shows the Pushover card and fields with the default times.
+	b := body(t, get(t, c, ts.URL+"/notifications/new"))
+	for _, want := range []string{`value="pushover"`, `name="pushover_user"`, `name="pushover_token"`, `name="pushover_repeat" value="1">`,
+		`name="pushover_retry" value="1"`, `name="pushover_expire" value="60"`, `data-needs="repeat"`, "Repeat until acknowledged"} {
+		if !strings.Contains(b, want) {
+			t.Errorf("channel form lacks %q", want)
+		}
+	}
+
+	keys := url.Values{"type": {"pushover"}, "pushover_user": {"uUSERKEY123"}, "pushover_token": {"aAPPTOKEN456"}}
+	with := func(extra url.Values) url.Values {
+		v := url.Values{}
+		for k, vs := range keys {
+			v[k] = vs
+		}
+		for k, vs := range extra {
+			v[k] = vs
+		}
+		return v
+	}
+	tests := []struct {
+		name string
+		form url.Values
+		want string
+	}{
+		{"missing keys", url.Values{"type": {"pushover"}}, "Enter the user key."},
+		{"repeat checks the retry interval", with(url.Values{"pushover_repeat": {"1"}, "pushover_retry": {"0"}, "pushover_expire": {"60"}}), "Enter a number between 1 and 60."},
+		{"repeat checks the expiry time", with(url.Values{"pushover_repeat": {"1"}, "pushover_retry": {"1"}, "pushover_expire": {""}}), "Enter the expiry time."},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			res := postForm(t, c, ts.URL+"/notifications/new", tc.form)
+			if b := body(t, res); res.StatusCode != http.StatusBadRequest || !strings.Contains(b, tc.want) || strings.Contains(b, "APPTOKEN") {
+				t.Fatalf("status = %d, want 400 with %q and no token", res.StatusCode, tc.want)
+			}
+		})
+	}
+
+	// Create with repeat on.
+	res := postForm(t, c, ts.URL+"/notifications/new", with(url.Values{"pushover_repeat": {"1"}, "pushover_retry": {"2"}, "pushover_expire": {"90"}}))
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("create = %d", res.StatusCode)
+	}
+	channels, _ := st.Channels(ctx)
+	if len(channels) != 1 || channels[0].Name != "Pushover" || channels[0].Config["repeat"] != "1" || channels[0].Config["retry"] != "2" || channels[0].Config["user"] != "uUSERKEY123" {
+		t.Fatalf("saved channels = %+v", channels)
+	}
+	id := strconv.FormatInt(channels[0].ID, 10)
+
+	// The list and the edit form show the switch state, never the keys.
+	b = body(t, get(t, c, ts.URL+"/notifications"))
+	if !strings.Contains(b, "Pushover · DOWN alerts repeat until acknowledged") || strings.Contains(b, "USERKEY") || strings.Contains(b, "APPTOKEN") {
+		t.Fatal("list lacks the Pushover summary or leaks a key")
+	}
+	b = body(t, get(t, c, ts.URL+"/notifications/"+id+"/edit"))
+	if !strings.Contains(b, `name="pushover_repeat" value="1" checked`) || !strings.Contains(b, `name="pushover_retry" value="2"`) || strings.Contains(b, "USERKEY") || strings.Contains(b, "APPTOKEN") {
+		t.Fatal("edit form lacks the saved repeat settings or leaks a key")
+	}
+
+	// Turn repeat off. Empty secrets keep the keys, and the times are not checked.
+	res = postForm(t, c, ts.URL+"/notifications/"+id+"/edit", url.Values{"pushover_user": {""}, "pushover_token": {""}, "pushover_retry": {"0"}})
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("edit = %d", res.StatusCode)
+	}
+	ch, _ := st.Channel(ctx, channels[0].ID)
+	if ch.Config["repeat"] != "" || ch.Config["user"] != "uUSERKEY123" || ch.Config["token"] != "aAPPTOKEN456" {
+		t.Fatalf("edited channel = %+v", ch)
+	}
+	if b := body(t, get(t, c, ts.URL+"/notifications")); !strings.Contains(b, "Pushover · Normal priority") {
+		t.Fatal("list does not show normal priority after repeat is off")
+	}
+}
+
 func TestChannelListShowsLastError(t *testing.T) {
 	s, st := newTestServer(t, Options{})
 	ctx := context.Background()

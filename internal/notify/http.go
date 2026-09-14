@@ -46,13 +46,17 @@ func httpError(res *http.Response) error {
 	msg := fmt.Sprintf("HTTP %d", res.StatusCode)
 	body, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
 	var detail struct {
-		Description string `json:"description"` // Telegram
-		Message     string `json:"message"`     // Discord
-		Error       string `json:"error"`       // ntfy
+		Description string   `json:"description"` // Telegram
+		Message     string   `json:"message"`     // Discord
+		Error       string   `json:"error"`       // ntfy
+		Errors      []string `json:"errors"`      // Pushover
 	}
 	text := ""
 	if json.Unmarshal(body, &detail) == nil {
 		text = firstNonEmpty(detail.Description, detail.Message, detail.Error)
+		if text == "" && len(detail.Errors) > 0 {
+			text = detail.Errors[0]
+		}
 	} else if t := strings.TrimSpace(string(body)); t != "" && !strings.HasPrefix(t, "<") {
 		text = t // Slack answers with plain text like "no_service"
 	}

@@ -90,6 +90,12 @@ func TestValidate(t *testing.T) {
 		{"slack missing", store.Channel{Type: store.ChannelSlack, Config: map[string]string{}}, []string{"url"}},
 		{"telegram", store.Channel{Type: store.ChannelTelegram, Config: map[string]string{"token": "1:abc"}}, []string{"chat_id"}},
 		{"ntfy no token is fine", store.Channel{Type: store.ChannelNtfy, Config: map[string]string{"url": "https://ntfy.sh/t"}}, nil},
+		{"pushover ok", store.Channel{Type: store.ChannelPushover, Config: map[string]string{"user": "u", "token": "a"}}, nil},
+		{"pushover missing keys", store.Channel{Type: store.ChannelPushover, Config: map[string]string{}}, []string{"user", "token"}},
+		{"pushover repeat off skips the times", store.Channel{Type: store.ChannelPushover, Config: map[string]string{"user": "u", "token": "a", "retry": "0"}}, nil},
+		{"pushover repeat checks the times", store.Channel{Type: store.ChannelPushover, Config: map[string]string{"user": "u", "token": "a", "repeat": "1", "retry": "0", "expire": "181"}}, []string{"retry", "expire"}},
+		{"pushover repeat needs the times", store.Channel{Type: store.ChannelPushover, Config: map[string]string{"user": "u", "token": "a", "repeat": "1"}}, []string{"retry", "expire"}},
+		{"pushover repeat ok", store.Channel{Type: store.ChannelPushover, Config: map[string]string{"user": "u", "token": "a", "repeat": "1", "retry": "60", "expire": "180"}}, nil},
 		{"email ok", store.Channel{Type: store.ChannelEmail, Config: map[string]string{"host": "smtp.example.com", "port": "587", "from": "a@example.com", "to": "b@example.com"}}, nil},
 		{"email bad", store.Channel{Type: store.ChannelEmail, Config: map[string]string{"host": "smtp.example.com", "port": "0", "from": "nope", "to": "b@example.com"}}, []string{"port", "from"}},
 	}
@@ -118,6 +124,13 @@ func TestRedaction(t *testing.T) {
 	c := store.Channel{Type: store.ChannelTelegram, Config: map[string]string{"token": "123:ABCDEF", "chat_id": "42"}}
 	if got := Redact("Post https://api.telegram.org/bot123:ABCDEF/sendMessage: boom", Secrets(c)); strings.Contains(got, "ABCDEF") {
 		t.Fatalf("Redact left the token: %q", got)
+	}
+	p := store.Channel{Type: store.ChannelPushover, Config: map[string]string{"user": "uUSERKEY123", "token": "aAPPTOKEN456", "repeat": "1", "retry": "1", "expire": "60"}}
+	if got := Redact("user uUSERKEY123 token aAPPTOKEN456", Secrets(p)); strings.Contains(got, "USERKEY") || strings.Contains(got, "APPTOKEN") {
+		t.Fatalf("Redact left a Pushover key: %q", got)
+	}
+	if got := Summary(p); strings.Contains(got, "USERKEY") || got != "DOWN alerts repeat until acknowledged" {
+		t.Fatalf("Pushover summary = %q", got)
 	}
 	if got := Summary(store.Channel{Type: store.ChannelSlack, Config: map[string]string{"url": secret}}); strings.Contains(got, "SECRETTOKEN") || !strings.Contains(got, "hooks.slack.com") {
 		t.Fatalf("Summary = %q", got)

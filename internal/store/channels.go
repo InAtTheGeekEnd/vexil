@@ -15,6 +15,7 @@ const (
 	ChannelDiscord  = "discord"
 	ChannelTelegram = "telegram"
 	ChannelNtfy     = "ntfy"
+	ChannelPushover = "pushover"
 	ChannelWebhook  = "webhook"
 )
 

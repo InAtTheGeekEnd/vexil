@@ -100,6 +100,41 @@ func TestNotifyRetriesAndRecordsFailure(t *testing.T) {
 	}
 }
 
+func TestPushoverDeliveryRetriesAndRedacts(t *testing.T) {
+	s, st, slept := newTestService(t)
+	ctx := context.Background()
+	m := &store.Monitor{Name: "API", Type: store.TypeHTTP, Target: "https://api.example.com"}
+	if err := st.CreateMonitor(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	ts, cap := newCapture(t)
+	old := pushoverAPI
+	pushoverAPI = ts.URL
+	t.Cleanup(func() { pushoverAPI = old })
+
+	// The fake API rejects every attempt and echoes the user key back.
+	const user = "uQiRzpo4DXghDmr9QzzfQu27cmVRsG"
+	cap.status, cap.reply = http.StatusBadRequest, `{"errors":["user `+user+` is invalid"],"status":0}`
+	ch := &store.Channel{Type: store.ChannelPushover, Name: "Phone", Enabled: true, Config: map[string]string{
+		"user": user, "token": "azGDORePK8gMaC0QOYAMyEEuzJnyUi", "repeat": "1", "retry": "1", "expire": "60"}}
+	if err := st.CreateChannel(ctx, ch); err != nil {
+		t.Fatal(err)
+	}
+
+	s.Notify(ctx, engine.Event{MonitorID: m.ID, Alert: engine.AlertDown, At: testAt, Result: check.Result{Error: "HTTP 503"}})
+	s.Wait()
+	if len(*slept) != 3 {
+		t.Fatalf("sleeps = %v, want 3 retries", *slept)
+	}
+	if body := cap.json(t); body["priority"].(float64) != 2 || body["retry"].(float64) != 60 || body["expire"].(float64) != 3600 {
+		t.Fatalf("body = %v", body)
+	}
+	c, _ := st.Channel(ctx, ch.ID)
+	if c.LastError != "HTTP 400: user •••• is invalid" {
+		t.Fatalf("last error = %q", c.LastError)
+	}
+}
+
 func TestMessageFromEvent(t *testing.T) {
 	s, st, _ := newTestService(t)
 	ctx := context.Background()

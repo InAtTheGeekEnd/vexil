@@ -114,6 +114,46 @@ func (n *ntfy) Send(ctx context.Context, m Message) error {
 	return postJSON(ctx, n.client, base, body, headers)
 }
 
+// --- Pushover ---
+
+// pushoverAPI is the Pushover API base. Tests replace it.
+var pushoverAPI = "https://api.pushover.net"
+
+type pushover struct {
+	user   string
+	token  string
+	repeat bool // DOWN alerts use emergency priority
+	retry  int  // minutes between repeats
+	expire int  // minutes until the repeats stop
+	client *http.Client
+}
+
+func (p *pushover) Send(ctx context.Context, m Message) error {
+	body := map[string]any{
+		"token":    p.token,
+		"user":     p.user,
+		"title":    m.Title(),
+		"message":  strings.Join(m.Lines(), "\n"),
+		"priority": 0,
+	}
+	// Emergency priority repeats the alert until the user acknowledges it.
+	// Only DOWN alerts get it. UP alerts and certificate warnings must not
+	// keep a phone ringing.
+	if p.repeat && m.Kind == KindDown {
+		body["priority"] = 2
+		body["retry"] = p.retry * 60
+		body["expire"] = p.expire * 60
+	}
+	if m.URL != "" {
+		body["url"] = m.URL
+	}
+	if strings.Join(m.Lines(), "") == "" {
+		body["message"] = m.Title()
+		delete(body, "title")
+	}
+	return postJSON(ctx, p.client, pushoverAPI+"/1/messages.json", body, nil)
+}
+
 // --- Webhook ---
 
 type webhook struct {

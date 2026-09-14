@@ -1,5 +1,6 @@
-// Package notify sends alerts to the six channel types from SPEC.md
-// section 7: email, Slack, Discord, Telegram, ntfy and a plain webhook.
+// Package notify sends alerts to the seven channel types from SPEC.md
+// section 7: email, Slack, Discord, Telegram, ntfy, Pushover and a plain
+// webhook.
 package notify
 
 import (
@@ -153,6 +154,11 @@ func New(c store.Channel, client *http.Client) (Sender, error) {
 		return &telegram{token: cfg["token"], chatID: cfg["chat_id"], client: client}, nil
 	case store.ChannelNtfy:
 		return &ntfy{topicURL: cfg["url"], token: cfg["token"], client: client}, nil
+	case store.ChannelPushover:
+		retry, _ := strconv.Atoi(cfg["retry"])
+		expire, _ := strconv.Atoi(cfg["expire"])
+		return &pushover{user: cfg["user"], token: cfg["token"], repeat: cfg["repeat"] == "1",
+			retry: retry, expire: expire, client: client}, nil
 	case store.ChannelWebhook:
 		return &webhook{url: cfg["url"], client: client}, nil
 	}
@@ -164,9 +170,12 @@ func New(c store.Channel, client *http.Client) (Sender, error) {
 type Field struct {
 	Key         string
 	Label       string
-	Type        string // text, url, email, number, password
+	Type        string // text, url, email, number, password, switch
 	Placeholder string
 	Hint        string
+	Default     string // the value of a new form
+	Min, Max    int    // the range of a number
+	Needs       string // the key of a switch that must be on for the field to count
 	Required    bool
 	Secret      bool // never shown again after save
 }
@@ -181,6 +190,7 @@ var Types = []struct {
 	{store.ChannelDiscord, "Discord", "Channel webhook"},
 	{store.ChannelTelegram, "Telegram", "A bot sends you a message"},
 	{store.ChannelNtfy, "ntfy", "Push to your phone"},
+	{store.ChannelPushover, "Pushover", "Push that can repeat"},
 	{store.ChannelWebhook, "Webhook", "POST JSON to your own URL"},
 }
 
@@ -197,7 +207,7 @@ func TypeLabel(typ string) string {
 var fields = map[string][]Field{
 	store.ChannelEmail: {
 		{Key: "host", Label: "SMTP host", Type: "text", Placeholder: "smtp.example.com", Required: true},
-		{Key: "port", Label: "Port", Type: "number", Placeholder: "587", Hint: "587 uses STARTTLS. 465 uses TLS from the start.", Required: true},
+		{Key: "port", Label: "Port", Type: "number", Placeholder: "587", Hint: "587 uses STARTTLS. 465 uses TLS from the start.", Min: 1, Max: 65535, Required: true},
 		{Key: "username", Label: "Username", Type: "text", Hint: "Leave empty if the server needs no login."},
 		{Key: "password", Label: "Password", Type: "password", Secret: true},
 		{Key: "from", Label: "From", Type: "email", Placeholder: "alerts@example.com", Required: true},
@@ -216,6 +226,13 @@ var fields = map[string][]Field{
 	store.ChannelNtfy: {
 		{Key: "url", Label: "Topic URL", Type: "url", Placeholder: "https://ntfy.sh/your-topic", Hint: "Subscribe to the same topic in the ntfy app.", Required: true},
 		{Key: "token", Label: "Access token", Type: "password", Hint: "Only for protected topics.", Secret: true},
+	},
+	store.ChannelPushover: {
+		{Key: "user", Label: "User key", Type: "password", Hint: "On your Pushover dashboard.", Required: true, Secret: true},
+		{Key: "token", Label: "Application token", Type: "password", Hint: "Create an application on pushover.net to get one.", Required: true, Secret: true},
+		{Key: "repeat", Label: "Repeat until acknowledged", Type: "switch", Hint: "DOWN alerts use emergency priority and repeat until you acknowledge them in the Pushover app."},
+		{Key: "retry", Label: "Retry interval", Type: "number", Default: "1", Min: 1, Max: 60, Needs: "repeat", Hint: "Minutes between repeats.", Required: true},
+		{Key: "expire", Label: "Expiry time", Type: "number", Default: "60", Min: 1, Max: 180, Needs: "repeat", Hint: "Minutes until the repeats stop.", Required: true},
 	},
 	store.ChannelWebhook: {
 		{Key: "url", Label: "URL", Type: "url", Placeholder: "https://example.com/hooks/uptime", Hint: "Receives a JSON POST for every alert.", Required: true, Secret: true},
@@ -238,6 +255,9 @@ func Validate(c store.Channel) map[string]string {
 		return errs
 	}
 	for _, f := range fs {
+		if f.Needs != "" && c.Config[f.Needs] != "1" {
+			continue
+		}
 		v := strings.TrimSpace(c.Config[f.Key])
 		if v == "" {
 			if f.Required {
@@ -257,8 +277,8 @@ func Validate(c store.Channel) map[string]string {
 			}
 		case "number":
 			n, err := strconv.Atoi(v)
-			if err != nil || n < 1 || n > 65535 {
-				errs[f.Key] = "Enter a port between 1 and 65535."
+			if err != nil || n < f.Min || n > f.Max {
+				errs[f.Key] = fmt.Sprintf("Enter a number between %d and %d.", f.Min, f.Max)
 			}
 		}
 	}
@@ -291,6 +311,11 @@ func Summary(c store.Channel) string {
 		return "Chat " + cfg["chat_id"]
 	case store.ChannelNtfy:
 		return strings.TrimPrefix(strings.TrimPrefix(cfg["url"], "https://"), "http://")
+	case store.ChannelPushover:
+		if cfg["repeat"] == "1" {
+			return "DOWN alerts repeat until acknowledged"
+		}
+		return "Normal priority"
 	}
 	return ""
 }

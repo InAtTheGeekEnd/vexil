@@ -30,16 +30,23 @@
       {{range .Types}}{{$t := .Type}}{{if or (not $f.ID) (eq $t $f.Type)}}
       <div class="for-{{$t}} stack">
         {{range index $f.Fields $t}}
-        <label class="field{{if index $f.Errors .Key}} invalid{{end}}{{if eq .Key "port"}} field-short{{end}}">
+        {{if eq .Type "switch"}}
+        <div class="field">
+          <label class="check"><input type="checkbox" name="{{$t}}_{{.Key}}" value="1"{{if eq (index $f.Values .Key) "1"}} checked{{end}}> {{.Label}}</label>
+          {{with .Hint}}<span class="hint">{{.}}</span>{{end}}
+        </div>
+        {{else}}
+        <label class="field{{if index $f.Errors .Key}} invalid{{end}}{{if eq .Type "number"}} field-short{{end}}"{{with .Needs}} data-needs="{{.}}"{{end}}>
           <span>{{.Label}}{{if not .Required}} <span class="muted">(optional)</span>{{end}}</span>
           {{if and .Secret (index $f.HasKeys .Key)}}
           <span class="secret"><span class="input secret-mask" aria-hidden="true">••••••••••••</span><button type="button" class="btn btn-secondary btn-sm" data-replace>Replace</button></span>
           <input type="{{.Type}}" name="{{$t}}_{{.Key}}" value="" autocomplete="off" spellcheck="false" hidden>
           {{else}}
-          <input type="{{.Type}}" name="{{$t}}_{{.Key}}" value="{{index $f.Values .Key}}" placeholder="{{.Placeholder}}" autocomplete="off" spellcheck="false"{{if eq .Key "port"}} min="1" max="65535" inputmode="numeric"{{end}}>
+          <input type="{{.Type}}" name="{{$t}}_{{.Key}}" value="{{index $f.Values .Key}}" placeholder="{{.Placeholder}}" autocomplete="off" spellcheck="false"{{if eq .Type "number"}} min="{{.Min}}" max="{{.Max}}" inputmode="numeric"{{end}}>
           {{end}}
           {{with index $f.Errors .Key}}<span class="error">{{.}}</span>{{else}}{{with .Hint}}<span class="hint">{{.}}</span>{{end}}{{end}}
         </label>
+        {{end}}
         {{end}}
       </div>
       {{end}}{{end}}
