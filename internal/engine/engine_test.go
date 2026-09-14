@@ -153,7 +153,10 @@ func waitFor(t *testing.T, ch <-chan Event, d time.Duration, pred func(Event) bo
 	deadline := time.After(d)
 	for {
 		select {
-		case ev := <-ch:
+		case ev, ok := <-ch:
+			if !ok {
+				t.Fatal("the hub dropped the subscription: the test read events too slowly")
+			}
 			if pred(ev) {
 				return ev
 			}
@@ -533,27 +536,49 @@ func TestReady(t *testing.T) {
 	}
 }
 
+// TestHub fans events out. A subscriber that falls behind loses its
+// subscription: its channel closes after the events it has, so it knows
+// that it missed one. Another subscriber keeps getting events.
 func TestHub(t *testing.T) {
+	// recv waits a moment for an event or a close, so a hub that neither
+	// sends nor closes fails the test instead of hanging it.
+	recv := func(ch <-chan Event) (Event, bool) {
+		t.Helper()
+		select {
+		case ev, ok := <-ch:
+			return ev, ok
+		case <-time.After(2 * time.Second):
+			t.Fatal("no event and no close within 2s")
+			return Event{}, false
+		}
+	}
 	h := NewHub()
-	a, stopA := h.Subscribe(1)
-	b, stopB := h.Subscribe(1)
-	defer stopB()
+	slow, stopSlow := h.Subscribe(1)
+	defer stopSlow()
+	fast, stopFast := h.Subscribe(2)
 	h.Publish(Event{MonitorID: 1})
-	h.Publish(Event{MonitorID: 2}) // dropped: buffers are full
-	if ev := <-a; ev.MonitorID != 1 {
-		t.Fatalf("a got %+v", ev)
+	h.Publish(Event{MonitorID: 2}) // the slow buffer is full: the hub drops it
+	if ev, ok := recv(slow); !ok || ev.MonitorID != 1 {
+		t.Fatalf("slow got %+v, open %v; want event 1", ev, ok)
 	}
-	if ev := <-b; ev.MonitorID != 1 {
-		t.Fatalf("b got %+v", ev)
+	if ev, ok := recv(slow); ok {
+		t.Fatalf("slow got %+v after it fell behind, want a closed channel", ev)
 	}
-	stopA()
-	stopA() // idempotent
+	for _, want := range []int64{1, 2} {
+		if ev, _ := recv(fast); ev.MonitorID != want {
+			t.Fatalf("fast got %+v, want event %d", ev, want)
+		}
+	}
 	h.Publish(Event{MonitorID: 3})
-	if len(a) != 0 {
-		t.Fatal("unsubscribed channel received an event")
+	if ev, _ := recv(fast); ev.MonitorID != 3 {
+		t.Fatalf("fast got %+v, want event 3", ev)
 	}
-	if ev := <-b; ev.MonitorID != 3 {
-		t.Fatalf("b got %+v", ev)
+	stopFast()
+	stopFast() // a second stop is harmless
+	stopSlow() // and so is a stop after the hub dropped the subscriber
+	h.Publish(Event{MonitorID: 4})
+	if _, ok := recv(fast); ok {
+		t.Fatal("a stopped subscription is still open")
 	}
 }
 

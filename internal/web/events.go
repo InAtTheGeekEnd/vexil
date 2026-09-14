@@ -78,7 +78,13 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
 				return
 			}
-		case ev := <-events:
+		case ev, ok := <-events:
+			if !ok {
+				// The hub dropped this stream because it fell behind, so the
+				// page has missed events. The browser reconnects, and live.js
+				// loads the page again.
+				return
+			}
 			if err := s.writeEvent(r.Context(), w, ev); err != nil {
 				return
 			}
