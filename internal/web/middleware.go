@@ -2,6 +2,7 @@ package web
 
 import (
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -50,6 +51,15 @@ func (w *statusWriter) Write(b []byte) (int, error) {
 // Unwrap lets http.ResponseController reach the real writer.
 func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
+// logPath returns the request path for the access log. The token in a push
+// URL is a secret, so it is not written.
+func logPath(r *http.Request) string {
+	if strings.HasPrefix(r.URL.Path, "/push/") {
+		return "/push/[redacted]"
+	}
+	return r.URL.Path
+}
+
 // accessLog logs one line per request. Health endpoints are not logged.
 func (s *Server) accessLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -65,7 +75,7 @@ func (s *Server) accessLog(next http.Handler) http.Handler {
 		}
 		s.log.Info("request",
 			"method", r.Method,
-			"path", r.URL.Path,
+			"path", logPath(r),
 			"status", sw.status,
 			"ms", time.Since(start).Milliseconds(),
 		)
