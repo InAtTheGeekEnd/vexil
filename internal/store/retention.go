@@ -122,12 +122,43 @@ func (s *Store) deleteDay(ctx context.Context, monitorID int64, day time.Time, b
 	}
 }
 
-// RollupDays writes the daily rows of the complete UTC days in the 30 days
+// Rollup writes the hourly rows of recent hours and then the daily rows of
+// recent days.
+func (s *Store) Rollup(ctx context.Context, now time.Time) error {
+	if err := s.rollupHours(ctx, now); err != nil {
+		return err
+	}
+	return s.rollupDays(ctx, now)
+}
+
+// rollupHours writes the hourly rows of the last finished UTC hour and
+// rewrites them when they exist, as checks that end after an earlier run
+// can come in late. The current hour gets no row: the pages read it from
+// the checks.
+func (s *Store) rollupHours(ctx context.Context, now time.Time) error {
+	return s.rollupHour(ctx, now.UTC().Truncate(time.Hour).Add(-time.Hour))
+}
+
+// rollupHour writes the hourly rows of one UTC hour for every monitor with
+// checks in it, in one statement.
+func (s *Store) rollupHour(ctx context.Context, hour time.Time) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO hourly (monitor_id, hour, total, ok, avg_latency)
+		SELECT monitor_id, ?1, COUNT(*), SUM(ok), CAST(ROUND(AVG(CASE WHEN ok = 1 THEN latency_ms END)) AS INTEGER)
+		FROM checks
+		WHERE monitor_id IN (SELECT id FROM monitors) AND at >= ?1 AND at < ?2
+		GROUP BY monitor_id
+		ON CONFLICT(monitor_id, hour) DO UPDATE SET total = excluded.total, ok = excluded.ok, avg_latency = excluded.avg_latency`,
+		hour.Unix(), hour.Add(time.Hour).Unix())
+	return err
+}
+
+// rollupDays writes the daily rows of the complete UTC days in the 30 days
 // before now, so the dashboard reads daily and not the raw checks. It
 // rewrites yesterday, whose last checks can come in after an earlier run,
 // and fills each older day that has no row yet, as after a downtime. Today
 // gets no row: the dashboard reads today from the checks.
-func (s *Store) RollupDays(ctx context.Context, now time.Time) error {
+func (s *Store) rollupDays(ctx context.Context, now time.Time) error {
 	today := now.UTC().Truncate(24 * time.Hour)
 	yesterday := today.AddDate(0, 0, -1)
 	if err := s.rollupAll(ctx, yesterday, true); err != nil {
@@ -158,18 +189,21 @@ func (s *Store) rollupAll(ctx context.Context, day time.Time, replace bool) erro
 	return err
 }
 
-// nextRun returns the wait until the next run of the hourly job: an hour, or
-// until 30 seconds after the next UTC midnight when that comes first, so
-// yesterday gets its daily row soon after the day ends.
+// nextRun returns the wait until the next run of the hourly job: 30 seconds
+// after the next full UTC hour, so the hour that ended gets its rows soon,
+// and after midnight the day too. A check takes at most 10 seconds, so
+// the checks of the hour are in by then.
 func nextRun(now time.Time) time.Duration {
-	u := now.UTC()
-	midnight := time.Date(u.Year(), u.Month(), u.Day()+1, 0, 0, 30, 0, time.UTC)
-	return min(time.Hour, midnight.Sub(u))
+	next := now.UTC().Truncate(time.Hour).Add(30 * time.Second)
+	if !next.After(now) {
+		next = next.Add(time.Hour)
+	}
+	return next.Sub(now)
 }
 
-// RunRetention deletes expired sessions, writes the daily rows of recent
-// days and runs Retain, at once and then every hour, and 30 seconds after
-// each UTC midnight, until ctx ends. The returned channel closes when the
+// RunRetention deletes expired sessions, writes the hourly and daily rows of
+// recent hours and days and runs Retain, at once and then 30 seconds after
+// every full UTC hour, until ctx ends. The returned channel closes when the
 // job has stopped.
 func (s *Store) RunRetention(ctx context.Context, log *slog.Logger) <-chan struct{} {
 	done := make(chan struct{})
@@ -179,8 +213,8 @@ func (s *Store) RunRetention(ctx context.Context, log *slog.Logger) <-chan struc
 			if err := s.DeleteExpiredSessions(ctx, time.Now()); err != nil && ctx.Err() == nil {
 				log.Error("delete expired sessions", "err", err)
 			}
-			if err := s.RollupDays(ctx, time.Now()); err != nil && ctx.Err() == nil {
-				log.Error("daily rollup failed", "err", err)
+			if err := s.Rollup(ctx, time.Now()); err != nil && ctx.Err() == nil {
+				log.Error("rollup failed", "err", err)
 			}
 			n, err := s.Retain(ctx, time.Now(), retentionBatch)
 			switch {

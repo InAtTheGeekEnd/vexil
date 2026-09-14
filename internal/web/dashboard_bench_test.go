@@ -67,8 +67,8 @@ func BenchmarkDashboard(b *testing.B) {
 	if err := db.Close(); err != nil {
 		b.Fatal(err)
 	}
-	// The hourly job writes the daily rows of the days before today.
-	if err := st.RollupDays(ctx, time.Now()); err != nil {
+	// The hourly job writes the hourly and daily rows.
+	if err := st.Rollup(ctx, time.Now()); err != nil {
 		b.Fatal(err)
 	}
 

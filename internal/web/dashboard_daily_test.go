@@ -36,7 +36,7 @@ func TestDashboardCountsMissingDays(t *testing.T) {
 			insert(today.AddDate(0, 0, -d).Add(12*time.Hour+time.Duration(i)*time.Minute), i > 0)
 		}
 	}
-	if err := st.RollupDays(ctx, now); err != nil {
+	if err := st.Rollup(ctx, now); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 10; i++ {
@@ -84,7 +84,7 @@ func TestDashboardReadsDaily(t *testing.T) {
 			insert(today.AddDate(0, 0, -d).Add(12*time.Hour+time.Duration(i)*time.Minute), i > 0)
 		}
 	}
-	if err := st.RollupDays(ctx, now); err != nil {
+	if err := st.Rollup(ctx, now); err != nil {
 		t.Fatal(err)
 	}
 	for d := 1; d <= 3; d++ {
