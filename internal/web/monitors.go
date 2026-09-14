@@ -17,7 +17,7 @@ import (
 	"github.com/InAtTheGeekEnd/vexil/internal/store"
 )
 
-// maxNameLen limits a monitor or channel name. The forms set the same
+// maxNameLen limits a monitor, channel or group name. The forms set the same
 // limit with maxlength.
 const maxNameLen = 60
 

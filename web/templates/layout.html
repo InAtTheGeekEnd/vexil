@@ -27,6 +27,7 @@
     <a class="brand" href="/">{{template "logo" .}}<span>{{.Brand.Name}}</span></a>
     <nav class="nav" aria-label="Main">
       <a href="/"{{if eq .Nav "dashboard"}} aria-current="page"{{end}}>Dashboard</a>
+      <a href="/groups"{{if eq .Nav "groups"}} aria-current="page"{{end}}>Groups</a>
       <a href="/notifications"{{if eq .Nav "notifications"}} aria-current="page"{{end}}>Notifications</a>
       <a href="/settings"{{if eq .Nav "settings"}} aria-current="page"{{end}}>Settings</a>
     </nav>

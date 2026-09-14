@@ -1,0 +1,40 @@
+{{define "title"}}Groups · {{.Brand.Name}}{{end}}
+{{define "body"}}
+{{template "header" .}}
+<main class="container page">
+{{with .Content}}
+{{if .Rows}}
+  <div class="page-head">
+    <div>
+      <h1 class="t-28">Groups</h1>
+      <p class="muted">A group collects related monitors under one heading.</p>
+    </div>
+    <a class="btn btn-primary" href="/groups/new">Add group</a>
+  </div>
+  <ul class="groups">
+  {{range .Rows}}
+    <li class="group-row">
+      <span class="group-name">
+        <span class="w-600" title="{{.Name}}">{{.Name}}</span>
+        <span class="muted small">{{.Count}}</span>
+      </span>
+      <span class="row group-actions">
+        <a class="btn btn-secondary btn-sm" href="/groups/{{.ID}}/edit">Rename</a>
+        <form method="post" action="/groups/{{.ID}}/delete" class="inline" data-confirm="{{.Confirm}}"><button type="submit" class="btn btn-danger btn-sm">Delete</button></form>
+      </span>
+    </li>
+  {{end}}
+  </ul>
+{{else}}
+  <div class="page-head">
+    <h1 class="t-28">Groups</h1>
+  </div>
+  <section class="empty">
+    <p class="lead">No groups yet.</p>
+    <a class="btn btn-primary" href="/groups/new">Add your first group</a>
+  </section>
+{{end}}
+{{end}}
+</main>
+{{template "footer" .}}
+{{end}}

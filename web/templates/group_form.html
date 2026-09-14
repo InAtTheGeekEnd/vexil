@@ -1,0 +1,29 @@
+{{define "title"}}{{if .Content.ID}}Rename group{{else}}Add group{{end}} · {{.Brand.Name}}{{end}}
+{{define "body"}}
+{{template "header" .}}
+<main class="container page page-narrow">
+{{with .Content}}
+  <p class="crumbs small"><a href="/groups">Groups</a></p>
+  <div class="page-head">
+    <div>
+      <h1 class="t-28">{{if .ID}}Rename group{{else}}Add group{{end}}</h1>
+      <p class="muted">{{if .ID}}The monitors in the group stay in it.{{else}}Use a short name, like Production or Customers.{{end}}</p>
+    </div>
+  </div>
+  <form method="post" action="{{if .ID}}/groups/{{.ID}}/edit{{else}}/groups/new{{end}}" class="stack" novalidate>
+    <div class="card stack">
+      <label class="field{{if .Error}} invalid{{end}}">
+        <span>Name</span>
+        <input type="text" name="name" value="{{.Name}}" autocomplete="off" maxlength="60" required autofocus>
+        {{with .Error}}<span class="error">{{.}}</span>{{end}}
+      </label>
+    </div>
+    <div class="row">
+      <button type="submit" class="btn btn-primary">{{if .ID}}Save name{{else}}Add group{{end}}</button>
+      <a class="btn btn-secondary" href="/groups">Cancel</a>
+    </div>
+  </form>
+{{end}}
+</main>
+{{template "footer" .}}
+{{end}}

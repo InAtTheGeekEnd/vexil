@@ -32,7 +32,7 @@ type pageData struct {
 	Notice                 string // a green line at the top of the page
 	Title                  string
 	Message                string
-	Nav                    string // the active nav item: "dashboard", "notifications" or "settings"
+	Nav                    string // the active nav item: "dashboard", "groups", "notifications" or "settings"
 	// Live makes the page open the SSE stream. Down is the number of
 	// monitors that are down, shown in the tab title. A live page, and a
 	// page with StatusIcon set, also shows it in the tab icon.

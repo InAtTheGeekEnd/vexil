@@ -299,8 +299,17 @@ CREATE TABLE monitors (
   public      INTEGER NOT NULL DEFAULT 0,
   paused      INTEGER NOT NULL DEFAULT 0,
   position    INTEGER NOT NULL DEFAULT 0,
+  group_id    INTEGER,                -- monitor_groups.id; NULL means in no group
   created_at  INTEGER NOT NULL
 );
+
+CREATE TABLE monitor_groups (         -- not "groups": GROUPS is an SQLite keyword
+  id          INTEGER PRIMARY KEY,
+  name        TEXT NOT NULL,          -- 1 to 60 characters
+  position    INTEGER NOT NULL DEFAULT 0,
+  created_at  INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX monitor_groups_name ON monitor_groups(name COLLATE NOCASE);
 
 CREATE TABLE checks (
   monitor_id  INTEGER NOT NULL,
@@ -368,6 +377,7 @@ CREATE TABLE settings (
 | `/monitors/new` | Add monitor | Admin |
 | `/monitors/{id}` | Monitor detail | Admin |
 | `/monitors/{id}/edit` | Edit monitor | Admin |
+| `/groups` | Monitor groups | Admin |
 | `/notifications` | Channels | Admin |
 | `/settings` | Brand and password | Admin |
 | `/status` | Public status page | Public |
