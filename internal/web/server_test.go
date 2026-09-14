@@ -291,7 +291,7 @@ func TestSetup(t *testing.T) {
 	}{
 		{"too short", "short", "short", http.StatusBadRequest, "at least 10 characters"},
 		{"mismatch", "long enough one", "long enough two", http.StatusBadRequest, "do not match"},
-		{"longer than bcrypt takes", strings.Repeat("a", 73), strings.Repeat("a", 73), http.StatusBadRequest, "at most 72 characters"},
+		{"longer than bcrypt takes", strings.Repeat("a", 73), strings.Repeat("a", 73), http.StatusBadRequest, "That password is too long. Use a shorter one."},
 		{"ok", testPassword, testPassword, http.StatusSeeOther, ""},
 	}
 	for _, tt := range tests {

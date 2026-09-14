@@ -16,9 +16,9 @@ const MaxPasswordBytes = 72
 // new passwords.
 var (
 	ErrPasswordShort = errors.New("the password must have at least 10 characters")
-	// The limit counts bytes. An accented letter takes two, but the plain
-	// word keeps the message readable.
-	ErrPasswordLong     = errors.New("the password must have at most 72 characters")
+	// The limit counts bytes, as bcrypt does. An accented letter takes two,
+	// so the message gives no number.
+	ErrPasswordLong     = errors.New("that password is too long. Use a shorter one")
 	ErrPasswordMismatch = errors.New("the two passwords do not match")
 )
 
