@@ -102,6 +102,10 @@
 
 *, *::before, *::after { box-sizing: border-box; }
 
+/* The hidden attribute always hides, even on an element whose class sets
+   display. */
+[hidden] { display: none !important; }
+
 html { -webkit-text-size-adjust: 100%; }
 
 body {

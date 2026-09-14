@@ -391,6 +391,31 @@ func loadPage(t *testing.T, c *chrome, session, pageURL string) {
 // new on the second load.
 func openPage(t *testing.T, path, pageURL, theme, init string) (*chrome, string) {
 	t.Helper()
+	c, session := startPage(t, path, init)
+	load := func() string {
+		loadPage(t, c, session, pageURL)
+		var href string
+		c.eval(session, iconHref, &href)
+		return href
+	}
+	// The theme is chosen by the page script from localStorage, so it is
+	// set on the origin first and the page loaded again.
+	load()
+	var ok bool
+	c.eval(session, "(localStorage.setItem('theme', "+strconv.Quote(theme)+"), true)", &ok)
+	first := load()
+	// Safari keeps one icon per page URL and fetches only an icon URL it
+	// has not cached, so the URL must be new on every load.
+	if second := load(); second == first {
+		t.Fatalf("the icon URL is the same on two loads: %s", first)
+	}
+	return c, session
+}
+
+// startPage starts headless Chrome with one blank page and returns the page
+// session. init, when set, runs before the page scripts on every load.
+func startPage(t *testing.T, path, init string) (*chrome, string) {
+	t.Helper()
 	c := startChrome(t, path)
 	var target struct {
 		TargetID string `json:"targetId"`
@@ -408,23 +433,6 @@ func openPage(t *testing.T, path, pageURL, theme, init string) (*chrome, string)
 	c.call(session, "Page.enable", map[string]any{})
 	if init != "" {
 		c.call(session, "Page.addScriptToEvaluateOnNewDocument", map[string]any{"source": init})
-	}
-	load := func() string {
-		loadPage(t, c, session, pageURL)
-		var href string
-		c.eval(session, iconHref, &href)
-		return href
-	}
-	// The theme is chosen by the page script from localStorage, so it is
-	// set on the origin first and the page loaded again.
-	load()
-	var ok bool
-	c.eval(session, "(localStorage.setItem('theme', "+strconv.Quote(theme)+"), true)", &ok)
-	first := load()
-	// Safari keeps one icon per page URL and fetches only an icon URL it
-	// has not cached, so the URL must be new on every load.
-	if second := load(); second == first {
-		t.Fatalf("the icon URL is the same on two loads: %s", first)
 	}
 	return c, session
 }
