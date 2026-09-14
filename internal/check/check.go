@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
 )
 
 // Timeout is the fixed time limit for one check.
@@ -104,11 +105,33 @@ func Describe(err error) string {
 	if strings.Contains(msg, "tls:") || strings.Contains(msg, "x509:") {
 		return "invalid certificate"
 	}
+	// net/http quotes the bytes of a response that it cannot parse. The
+	// server chooses those bytes, so they never go into the reason.
+	if strings.Contains(msg, "malformed") {
+		return "invalid HTTP response"
+	}
 	if i := strings.LastIndex(msg, ": "); i >= 0 {
 		msg = msg[i+2:]
 	}
-	if len(msg) > 60 {
-		msg = msg[:60]
+	return cleanReason(msg)
+}
+
+// maxReason is the longest reason, in characters. Reasons appear in alerts
+// and on the public status page.
+const maxReason = 60
+
+// cleanReason turns control and format characters, and invalid UTF-8, into
+// spaces, joins runs of spaces and cuts the text to maxReason characters.
+func cleanReason(msg string) string {
+	msg = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == unicode.ReplacementChar {
+			return ' '
+		}
+		return r
+	}, msg)
+	msg = strings.Join(strings.Fields(msg), " ")
+	if r := []rune(msg); len(r) > maxReason {
+		msg = strings.TrimSpace(string(r[:maxReason]))
 	}
 	return msg
 }
