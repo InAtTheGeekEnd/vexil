@@ -63,6 +63,11 @@ func main() {
 		usage()
 		os.Exit(2)
 	}
+	if errors.Is(err, store.ErrV1Database) {
+		// One plain line, not a log record: the user must act on it.
+		fmt.Fprintf(os.Stderr, "The database in %s is from v1 and must be recreated.\n", cfg.Data)
+		os.Exit(1)
+	}
 	if err != nil {
 		log.Error("fatal", "err", err)
 		os.Exit(1)

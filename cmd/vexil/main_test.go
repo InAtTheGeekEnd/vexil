@@ -1,15 +1,100 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/InAtTheGeekEnd/vexil/internal/config"
 	"github.com/InAtTheGeekEnd/vexil/internal/store"
 )
+
+// TestMain runs main instead of the tests when VEXIL_TEST_RUN_MAIN is set, so
+// a test can start the binary as a user does. The variable holds the
+// arguments.
+func TestMain(m *testing.M) {
+	if args, ok := os.LookupEnv("VEXIL_TEST_RUN_MAIN"); ok {
+		os.Args = append([]string{os.Args[0]}, strings.Fields(args)...)
+		main()
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+// v1Schema is the schema of a v1 database: migrations 1 to 3 as v1 shipped
+// them, with no AUTOINCREMENT and no foreign keys.
+var v1Schema = []string{
+	`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY)`,
+	`CREATE TABLE monitors (
+		id INTEGER PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL, target TEXT NOT NULL,
+		keyword TEXT, expected_ip TEXT, push_token TEXT UNIQUE, interval_s INTEGER NOT NULL DEFAULT 60,
+		public INTEGER NOT NULL DEFAULT 0, paused INTEGER NOT NULL DEFAULT 0,
+		position INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL)`,
+	`CREATE TABLE checks (monitor_id INTEGER NOT NULL, at INTEGER NOT NULL, ok INTEGER NOT NULL,
+		latency_ms INTEGER, status_code INTEGER, error TEXT)`,
+	`CREATE INDEX checks_monitor_at ON checks(monitor_id, at)`,
+	`CREATE TABLE daily (monitor_id INTEGER NOT NULL, day TEXT NOT NULL, total INTEGER NOT NULL,
+		ok INTEGER NOT NULL, avg_latency INTEGER, PRIMARY KEY (monitor_id, day))`,
+	`CREATE TABLE incidents (id INTEGER PRIMARY KEY, monitor_id INTEGER NOT NULL,
+		started_at INTEGER NOT NULL, ended_at INTEGER, reason TEXT)`,
+	`CREATE TABLE channels (id INTEGER PRIMARY KEY, type TEXT NOT NULL, name TEXT NOT NULL,
+		config TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1)`,
+	`CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL)`,
+	`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+	`ALTER TABLE monitors ADD COLUMN cert_warned_at INTEGER`,
+	`ALTER TABLE channels ADD COLUMN last_error TEXT`,
+	`ALTER TABLE channels ADD COLUMN last_error_at INTEGER`,
+	`CREATE TABLE monitor_groups (id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+		position INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL)`,
+	`CREATE UNIQUE INDEX monitor_groups_name ON monitor_groups(name COLLATE NOCASE)`,
+	`ALTER TABLE monitors ADD COLUMN group_id INTEGER`,
+	`INSERT INTO schema_migrations (version) VALUES (1), (2), (3)`,
+	`INSERT INTO monitors (name, type, target, interval_s, created_at) VALUES ('Site', 'http', 'https://example.com', 60, 1700000000)`,
+}
+
+// TestV1DatabaseRefused starts the binary on a v1 database. It must not
+// start: it exits with code 1 and prints one line that says the database is
+// from v1 and must be recreated.
+func TestV1DatabaseRefused(t *testing.T) {
+	data := t.TempDir()
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(filepath.Join(data, store.FileName)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range v1Schema {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// A start that does not refuse would serve until the time limit.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^$")
+	cmd.Env = append(os.Environ(), "VEXIL_TEST_RUN_MAIN=", "VEXIL_DATA="+data, "VEXIL_ADDR=127.0.0.1:0")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err = cmd.Run()
+
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 1 {
+		t.Fatalf("exit = %v, want exit code 1; stderr:\n%s", err, stderr.String())
+	}
+	want := "The database in " + data + " is from v1 and must be recreated.\n"
+	if stderr.String() != want || stdout.Len() != 0 {
+		t.Fatalf("stderr = %q, stdout = %q; want only the line %q", stderr.String(), stdout.String(), want)
+	}
+}
 
 func TestVersionString(t *testing.T) {
 	tests := []struct {
