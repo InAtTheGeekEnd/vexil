@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"strings"
 	"sync"
@@ -161,7 +162,7 @@ func (s *Service) deliver(ctx context.Context, c store.Channel, m Message) {
 		}()
 	}
 	attempts := 0
-	failed, err := s.withRetries(ctx, c, "alert delivery", func(ctx context.Context) error {
+	_, err = s.withRetries(ctx, c, "alert delivery", func(ctx context.Context) error {
 		attempts++
 		// A DOWN alert that waits for a retry is dropped once its incident
 		// has closed: the UP alert can be out already, and a late DOWN alert
@@ -183,10 +184,10 @@ func (s *Service) deliver(ctx context.Context, c store.Channel, m Message) {
 		}
 		return
 	}
-	if c.LastError != "" || failed > 0 {
-		if err := s.store.SetChannelError(ctx, c.ID, "", time.Time{}); err != nil {
-			s.log.Error("clear channel error", "channel", c.ID, "err", err)
-		}
+	// Clear the error on every success. This copy of the channel can be older
+	// than an error that another delivery stored.
+	if err := s.store.ClearChannelError(ctx, c.ID); err != nil {
+		s.log.Error("clear channel error", "channel", c.ID, "err", err)
 	}
 	if cancels && m.Kind == KindDown && s.recovered(ctx, m) {
 		// The incident of this alert closed while the alert was on its way,
@@ -243,6 +244,19 @@ func (s *Service) recovered(ctx context.Context, m Message) bool {
 
 func (s *Service) fail(ctx context.Context, c store.Channel, msg string) {
 	s.log.Error("alert delivery failed", "channel", c.ID, "name", c.Name, "type", c.Type, "err", msg)
+	// The delivery used the channel as it was when the alert fired. When the
+	// user has changed or deleted it since, the failure says nothing about
+	// the channel now, so it is not stored.
+	cur, err := s.store.Channel(ctx, c.ID)
+	if err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			s.log.Error("read channel", "channel", c.ID, "err", err)
+		}
+		return
+	}
+	if !maps.Equal(cur.Config, c.Config) {
+		return
+	}
 	if err := s.store.SetChannelError(ctx, c.ID, msg, time.Now()); err != nil {
 		s.log.Error("record channel error", "channel", c.ID, "err", err)
 	}

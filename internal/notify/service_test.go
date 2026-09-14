@@ -406,6 +406,65 @@ func TestPushoverCancelOnRecovery(t *testing.T) {
 	}
 }
 
+// TestChannelErrorFollowsTheChannel covers two stale errors. A delivery that
+// fails with the old URL after the user fixed the channel must not store its
+// error. A delivery that works must clear an error that another delivery
+// stored after this one loaded the channel.
+func TestChannelErrorFollowsTheChannel(t *testing.T) {
+	s, st, _ := newTestService(t)
+	ctx := context.Background()
+	mon := &store.Monitor{Name: "API", Type: store.TypeHTTP, Target: "https://api.example.com"}
+	if err := st.CreateMonitor(ctx, mon); err != nil {
+		t.Fatal(err)
+	}
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer bad.Close()
+	ch := &store.Channel{Type: store.ChannelWebhook, Name: "Hook", Enabled: true, Config: map[string]string{"url": bad.URL}}
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("late") == "1" {
+			// Another delivery stores its failure while this one is on its way.
+			if err := st.SetChannelError(ctx, ch.ID, "HTTP 500", time.Now()); err != nil {
+				t.Error(err)
+			}
+		}
+		io.WriteString(w, "ok")
+	}))
+	defer good.Close()
+	if err := st.CreateChannel(ctx, ch); err != nil {
+		t.Fatal(err)
+	}
+	setURL := func(ctx context.Context, u string) {
+		t.Helper()
+		if err := st.UpdateChannel(ctx, store.Channel{ID: ch.ID, Name: ch.Name, Config: map[string]string{"url": u}}); err != nil {
+			t.Error(err)
+		}
+	}
+
+	// The user fixes the URL while the alert waits for its first retry.
+	var fixed atomic.Bool
+	s.sleep = func(ctx context.Context, d time.Duration) bool {
+		if fixed.CompareAndSwap(false, true) {
+			setURL(ctx, good.URL)
+		}
+		return true
+	}
+	s.Notify(ctx, engine.Event{MonitorID: mon.ID, Alert: engine.AlertUp, At: testAt})
+	s.Wait()
+	if c, _ := st.Channel(ctx, ch.ID); c.LastError != "" {
+		t.Fatalf("error from the old URL = %q, want none", c.LastError)
+	}
+
+	// The next alert works while another delivery stores a failure.
+	setURL(ctx, good.URL+"/?late=1")
+	s.Notify(ctx, engine.Event{MonitorID: mon.ID, Alert: engine.AlertUp, At: testAt})
+	s.Wait()
+	if c, _ := st.Channel(ctx, ch.ID); c.LastError != "" {
+		t.Fatalf("error after a delivery that worked = %q, want none", c.LastError)
+	}
+}
+
 func TestMessageFromEvent(t *testing.T) {
 	s, st, _ := newTestService(t)
 	ctx := context.Background()
