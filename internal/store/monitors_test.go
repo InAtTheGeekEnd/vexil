@@ -79,6 +79,46 @@ func TestMonitorCRUD(t *testing.T) {
 	}
 }
 
+func TestIncidentStartedAt(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	base := time.Unix(1_700_000_000, 0)
+	if _, err := s.OpenIncident(ctx, 1, base, "timeout"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CloseIncident(ctx, 1, base.Add(3*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.OpenIncident(ctx, 1, base.Add(5*time.Minute), "HTTP 503"); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name      string
+		monitorID int64
+		started   time.Time
+		wantOpen  bool
+		wantErr   error
+	}{
+		{"closed older incident", 1, base, false, nil},
+		{"open newer incident", 1, base.Add(5 * time.Minute), true, nil},
+		{"compared to the second", 1, base.Add(500 * time.Millisecond), false, nil},
+		{"no incident at that time", 1, base.Add(time.Minute), false, ErrNotFound},
+		{"other monitor", 2, base, false, ErrNotFound},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			inc, err := s.IncidentStartedAt(ctx, tc.monitorID, tc.started)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+			if err == nil && (inc.Open() != tc.wantOpen || inc.StartedAt.Unix() != tc.started.Unix()) {
+				t.Fatalf("incident = %+v", inc)
+			}
+		})
+	}
+}
+
 func TestChecksAndIncidents(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()

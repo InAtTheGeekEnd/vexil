@@ -170,8 +170,8 @@ func (s *Service) deliver(ctx context.Context, c store.Channel, m Message) {
 		}
 	}
 	if cancels && m.Kind == KindDown && s.recovered(ctx, m) {
-		// The monitor came back while this alert was on its way, so the
-		// cancel of the UP alert can have run too early.
+		// The incident of this alert closed while the alert was on its way,
+		// so the cancel of the UP alert can have run too early.
 		s.cancel(ctx, c, cn, m)
 	}
 }
@@ -208,10 +208,15 @@ func (s *Service) cancel(ctx context.Context, c store.Channel, cn canceler, m Me
 	}
 }
 
-// recovered reports whether the incident of a DOWN message has ended.
+// recovered reports whether the incident of a DOWN message has ended. It
+// reads the incident that the message belongs to, not the newest one: the
+// monitor can be DOWN again in a new incident.
 func (s *Service) recovered(ctx context.Context, m Message) bool {
-	incidents, err := s.store.Incidents(ctx, m.Monitor.ID, 1)
-	return err == nil && len(incidents) == 1 && !incidents[0].Open() && incidents[0].StartedAt.Equal(m.Started)
+	if m.Started.IsZero() {
+		return false
+	}
+	inc, err := s.store.IncidentStartedAt(ctx, m.Monitor.ID, m.Started)
+	return err == nil && !inc.Open()
 }
 
 func (s *Service) fail(ctx context.Context, c store.Channel, msg string) {

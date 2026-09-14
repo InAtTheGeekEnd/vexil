@@ -97,6 +97,14 @@ func (s *Store) CurrentIncident(ctx context.Context, monitorID int64) (Incident,
 	return scanIncident(row)
 }
 
+// IncidentStartedAt returns the incident of a monitor that started at the
+// given time, or ErrNotFound. Times are compared to the second.
+func (s *Store) IncidentStartedAt(ctx context.Context, monitorID int64, started time.Time) (Incident, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT id, monitor_id, started_at, ended_at, COALESCE(reason, '')
+		FROM incidents WHERE monitor_id = ? AND started_at = ? ORDER BY id DESC LIMIT 1`, monitorID, started.Unix())
+	return scanIncident(row)
+}
+
 // Incidents returns the newest n incidents of a monitor, newest first.
 func (s *Store) Incidents(ctx context.Context, monitorID int64, n int) ([]Incident, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, monitor_id, started_at, ended_at, COALESCE(reason, '')

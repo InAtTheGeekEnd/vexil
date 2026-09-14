@@ -140,46 +140,130 @@ func TestPushoverDeliveryRetriesAndRedacts(t *testing.T) {
 	}
 }
 
-func TestPushoverCancelOnRecovery(t *testing.T) {
-	var mu sync.Mutex
-	var calls []string
-	failCancel := false
+// fakePushover is a Pushover API that records each request as one line.
+type fakePushover struct {
+	mu           sync.Mutex
+	calls        []string
+	failCancel   bool // every cancel answers HTTP 500
+	failMessages int  // the next n messages answer HTTP 500
+}
+
+// Requests as fakePushover records them. {tag} stands for an incident tag.
+const (
+	downReq   = "message priority=2 tags={tag}"
+	plainReq  = "message priority=0 tags=<nil>"
+	cancelReq = "cancel /1/receipts/cancel_by_tag/{tag}.json token=aAPPTOKEN"
+)
+
+func newFakePushover(t *testing.T) *fakePushover {
+	t.Helper()
+	f := &fakePushover{}
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		json.NewDecoder(r.Body).Decode(&body)
-		mu.Lock()
-		defer mu.Unlock()
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		fail := f.failCancel
 		if r.URL.Path == "/1/messages.json" {
-			calls = append(calls, fmt.Sprintf("message priority=%v tags=%v", body["priority"], body["tags"]))
-		} else {
-			calls = append(calls, fmt.Sprintf("cancel %s token=%v", r.URL.Path, body["token"]))
-			if failCancel {
-				w.WriteHeader(http.StatusInternalServerError)
-				return
+			f.calls = append(f.calls, fmt.Sprintf("message priority=%v tags=%v", body["priority"], body["tags"]))
+			fail = f.failMessages > 0
+			if fail {
+				f.failMessages--
 			}
+		} else {
+			f.calls = append(f.calls, fmt.Sprintf("cancel %s token=%v", r.URL.Path, body["token"]))
+		}
+		if fail {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
 		}
 		io.WriteString(w, `{"status":1,"request":"x"}`)
 	}))
-	defer ts.Close()
+	t.Cleanup(ts.Close)
 	old := pushoverAPI
 	pushoverAPI = ts.URL
 	t.Cleanup(func() { pushoverAPI = old })
-	// take returns the requests so far, sorted: the UP alert and the cancel
-	// run at the same time.
-	take := func() string {
-		mu.Lock()
-		defer mu.Unlock()
-		out := calls
-		calls = nil
-		sort.Strings(out)
-		return strings.Join(out, "\n")
+	return f
+}
+
+// take returns the requests so far, sorted, and forgets them. Alerts and
+// cancels run at the same time, so their order is not fixed.
+func (f *fakePushover) take() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := f.calls
+	f.calls = nil
+	sort.Strings(out)
+	return strings.Join(out, "\n")
+}
+
+// A DOWN, UP, DOWN sequence: the first DOWN alert is still in retry when
+// the second outage starts. Its late delivery must cancel with its own tag.
+func TestPushoverLateCancelAfterNewOutage(t *testing.T) {
+	s, st, _ := newTestService(t)
+	api := newFakePushover(t)
+	api.mu.Lock()
+	api.failMessages = 1 // the first DOWN alert needs a retry
+	api.mu.Unlock()
+	ctx := context.Background()
+	mon := &store.Monitor{Name: "API", Type: store.TypeHTTP, Target: "https://api.example.com"}
+	if err := st.CreateMonitor(ctx, mon); err != nil {
+		t.Fatal(err)
+	}
+	ch := &store.Channel{Type: store.ChannelPushover, Name: "Phone", Enabled: true, Config: map[string]string{
+		"user": "uUSERKEY", "token": "aAPPTOKEN", "repeat": "1", "retry": "1", "expire": "60"}}
+	if err := st.CreateChannel(ctx, ch); err != nil {
+		t.Fatal(err)
+	}
+	firstAt, upAt, secondAt := testAt, testAt.Add(3*time.Minute), testAt.Add(5*time.Minute)
+
+	// While the first DOWN alert waits for its retry, the engine closes the
+	// first incident and sends UP, then opens a second incident and sends
+	// DOWN.
+	var once sync.Once
+	var sleeps atomic.Int32
+	s.sleep = func(ctx context.Context, d time.Duration) bool {
+		sleeps.Add(1)
+		once.Do(func() {
+			if err := st.CloseIncident(ctx, mon.ID, upAt); err != nil {
+				t.Error(err)
+			}
+			s.Notify(ctx, engine.Event{MonitorID: mon.ID, Alert: engine.AlertUp, At: upAt})
+			if _, err := st.OpenIncident(ctx, mon.ID, secondAt, "HTTP 503"); err != nil {
+				t.Error(err)
+			}
+			s.Notify(ctx, engine.Event{MonitorID: mon.ID, Alert: engine.AlertDown, At: secondAt, Result: check.Result{Error: "HTTP 503"}})
+		})
+		return true
 	}
 
-	const (
-		downReq   = "message priority=2 tags={tag}"
-		plainReq  = "message priority=0 tags=<nil>"
-		cancelReq = "cancel /1/receipts/cancel_by_tag/{tag}.json token=aAPPTOKEN"
-	)
+	if _, err := st.OpenIncident(ctx, mon.ID, firstAt, "HTTP 503"); err != nil {
+		t.Fatal(err)
+	}
+	s.Notify(ctx, engine.Event{MonitorID: mon.ID, Alert: engine.AlertDown, At: firstAt, Result: check.Result{Error: "HTTP 503"}})
+	s.Wait()
+
+	first := strings.ReplaceAll(cancelReq, "{tag}", fmt.Sprintf("m%d-%d", mon.ID, firstAt.Unix()))
+	firstDown := strings.ReplaceAll(downReq, "{tag}", fmt.Sprintf("m%d-%d", mon.ID, firstAt.Unix()))
+	secondDown := strings.ReplaceAll(downReq, "{tag}", fmt.Sprintf("m%d-%d", mon.ID, secondAt.Unix()))
+	want := []string{
+		first,      // the UP alert cancels before Pushover has the first DOWN alert
+		first,      // the late delivery of the first DOWN alert cancels it
+		plainReq,   // the UP alert
+		firstDown,  // the first DOWN alert, failed attempt
+		firstDown,  // the first DOWN alert, delivered
+		secondDown, // the second DOWN alert, not cancelled
+	}
+	sort.Strings(want)
+	if got := api.take(); got != strings.Join(want, "\n") {
+		t.Fatalf("requests:\n%s\nwant:\n%s", got, strings.Join(want, "\n"))
+	}
+	if n := sleeps.Load(); n != 1 {
+		t.Fatalf("sleeps = %d, want 1", n)
+	}
+}
+
+func TestPushoverCancelOnRecovery(t *testing.T) {
 	tests := []struct {
 		name       string
 		repeat     string
@@ -209,9 +293,10 @@ func TestPushoverCancelOnRecovery(t *testing.T) {
 			if err := st.CreateChannel(ctx, ch); err != nil {
 				t.Fatal(err)
 			}
-			mu.Lock()
-			failCancel, calls = tc.failCancel, nil
-			mu.Unlock()
+			api := newFakePushover(t)
+			api.mu.Lock()
+			api.failCancel = tc.failCancel
+			api.mu.Unlock()
 			tag := fmt.Sprintf("m%d-%d", mon.ID, testAt.Unix())
 			want := func(reqs []string) string {
 				return strings.ReplaceAll(strings.Join(reqs, "\n"), "{tag}", tag)
@@ -230,7 +315,7 @@ func TestPushoverCancelOnRecovery(t *testing.T) {
 			}
 			s.Notify(ctx, engine.Event{MonitorID: mon.ID, Alert: engine.AlertDown, At: testAt, Result: check.Result{Error: "HTTP 503"}})
 			s.Wait()
-			if got := take(); got != want(tc.wantDown) {
+			if got := api.take(); got != want(tc.wantDown) {
 				t.Fatalf("DOWN requests:\n%s\nwant:\n%s", got, want(tc.wantDown))
 			}
 			if tc.wantUp != nil {
@@ -239,7 +324,7 @@ func TestPushoverCancelOnRecovery(t *testing.T) {
 				}
 				s.Notify(ctx, engine.Event{MonitorID: mon.ID, Alert: engine.AlertUp, At: upAt})
 				s.Wait()
-				if got := take(); got != want(tc.wantUp) {
+				if got := api.take(); got != want(tc.wantUp) {
 					t.Fatalf("UP requests:\n%s\nwant:\n%s", got, want(tc.wantUp))
 				}
 			}
