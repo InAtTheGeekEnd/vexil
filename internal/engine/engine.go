@@ -71,6 +71,7 @@ type Engine struct {
 	done    chan struct{}
 
 	reloadMu sync.Mutex // one Reload at a time
+	writeMu  sync.Mutex // the writer and DeleteMonitor take turns
 
 	mu      sync.Mutex
 	baseCtx context.Context
@@ -236,6 +237,24 @@ func (e *Engine) Reload(ctx context.Context, id int64) error {
 	if st.State != prev {
 		e.hub.Publish(Event{MonitorID: id, Prev: prev, State: st.State, At: time.Now()})
 	}
+	return nil
+}
+
+// DeleteMonitor deletes a monitor with its history and forgets its status.
+// It takes turns with the writer: a result that the writer has written goes
+// with the delete, and a result that comes later finds no status and is
+// dropped. A check that was already running can finish after the delete, so
+// the store transaction alone cannot stop that write. Call Reload after it
+// to stop the runner.
+func (e *Engine) DeleteMonitor(ctx context.Context, id int64) error {
+	e.writeMu.Lock()
+	defer e.writeMu.Unlock()
+	if err := e.store.DeleteMonitor(ctx, id); err != nil {
+		return err
+	}
+	e.mu.Lock()
+	delete(e.status, id)
+	e.mu.Unlock()
 	return nil
 }
 
@@ -490,6 +509,8 @@ func (e *Engine) writer() {
 }
 
 func (e *Engine) handle(r result) {
+	e.writeMu.Lock()
+	defer e.writeMu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 

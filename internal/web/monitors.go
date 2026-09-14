@@ -359,7 +359,12 @@ func (s *Server) handleMonitorDelete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.store.DeleteMonitor(r.Context(), m.ID); err != nil {
+	del := s.store.DeleteMonitor
+	if s.engine != nil {
+		// The engine drops a check result that arrives during the delete.
+		del = s.engine.DeleteMonitor
+	}
+	if err := del(r.Context(), m.ID); err != nil {
 		s.serverError(w, err)
 		return
 	}
