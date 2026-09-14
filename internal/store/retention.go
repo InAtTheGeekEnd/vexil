@@ -27,7 +27,8 @@ const hourlyAvgLatency = `CAST(ROUND(SUM(avg_latency * ok) * 1.0 / SUM(CASE WHEN
 // tables and deletes them. It works on whole UTC days that ended before the
 // cutoff, oldest first, one day of one monitor at a time. The hourly and
 // daily rows are written first. Then the checks of that day go in batches
-// of batch rows. It returns the number of deleted rows.
+// of batch rows. Last, the hourly rows before the cutoff go. It returns the
+// number of deleted check rows.
 func (s *Store) Retain(ctx context.Context, now time.Time, batch int) (int64, error) {
 	c := now.UTC().Add(-RawRetention)
 	cutoff := time.Date(c.Year(), c.Month(), c.Day(), 0, 0, 0, 0, time.UTC)
@@ -58,6 +59,13 @@ func (s *Store) Retain(ctx context.Context, now time.Time, batch int) (int64, er
 				return deleted, err
 			}
 		}
+	}
+	// The hourly rows before the cutoff go after the checks, in one statement
+	// that searches the primary key of every monitor. It also removes rows
+	// whose checks an earlier run deleted before it stopped.
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM hourly WHERE monitor_id IN (SELECT id FROM monitors) AND hour < ?`,
+		cutoff.Unix()); err != nil {
+		return deleted, err
 	}
 	return deleted, nil
 }
