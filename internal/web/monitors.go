@@ -99,8 +99,8 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	// Three queries for all monitors, not a few per monitor (SPEC.md section
 	// 14: less than 50 ms). The bar and the percent read the daily rows of the
-	// days before today. Today and the sparkline come from the checks of the
-	// last 24 hours.
+	// days before today. Today and the sparkline come from the last 24 hours:
+	// the hourly rows, and the hours after them from the checks.
 	today := now.UTC().Truncate(24 * time.Hour)
 	first := today.AddDate(0, 0, -29)
 	daily, err := s.store.DailyTotals(ctx, first, today.AddDate(0, 0, -1))
@@ -131,7 +131,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
-	buckets, err := s.store.RecentBuckets(ctx, now.Add(-24*time.Hour), 30*time.Minute)
+	hours, err := s.store.RecentHours(ctx, now.UTC().Truncate(time.Hour).Add(-23*time.Hour))
 	if err != nil {
 		s.serverError(w, err)
 		return
@@ -167,11 +167,11 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		if !m.Paused {
 			active++
 		}
-		row.Uptime, row.UptimePct = uptimeBar(dashboardDays(first, today, daily[m.ID], incidents[m.ID], buckets[m.ID]))
+		row.Uptime, row.UptimePct = uptimeBar(dashboardDays(first, today, daily[m.ID], incidents[m.ID], hours[m.ID]))
 		var values []float64
-		for _, b := range buckets[m.ID] {
-			if b.HasLatency {
-				values = append(values, float64(b.LatencyMS))
+		for _, h := range hours[m.ID] {
+			if h.HasLatency {
+				values = append(values, float64(h.LatencyMS))
 			}
 		}
 		if len(values) >= 2 {
@@ -236,9 +236,9 @@ func missingDays(first, today time.Time, daily map[int64]map[string]store.DayTot
 }
 
 // dashboardDays builds the 30 days of the uptime bar of one monitor: the
-// days before today from its daily rows, and today from its buckets of the
+// days before today from its daily rows, and today from its hours of the
 // last 24 hours.
-func dashboardDays(first, today time.Time, daily map[string]store.DayTotals, incidents map[string]int, buckets []store.Bucket) []store.DayStat {
+func dashboardDays(first, today time.Time, daily map[string]store.DayTotals, incidents map[string]int, hours []store.Bucket) []store.DayStat {
 	var days []store.DayStat
 	for d := first; d.Before(today); d = d.AddDate(0, 0, 1) {
 		key := d.Format("2006-01-02")
@@ -247,10 +247,10 @@ func dashboardDays(first, today time.Time, daily map[string]store.DayTotals, inc
 	}
 	key := today.Format("2006-01-02")
 	current := store.DayStat{Day: key, Incidents: incidents[key]}
-	for _, b := range buckets {
-		if !b.At.Before(today) {
-			current.Total += b.Total
-			current.OK += b.OK
+	for _, h := range hours {
+		if !h.At.Before(today) {
+			current.Total += h.Total
+			current.OK += h.OK
 		}
 	}
 	return append(days, current)
