@@ -118,6 +118,7 @@ Only a person with access to the server can reset the password. This is the secu
 | Keyword search limit | First 1 MB of the body |
 | TLS certificate warning | 14 days before expiry, one alert |
 | Raw check retention | 30 days |
+| Hourly summary retention | 30 days |
 | Daily summary retention | Forever |
 | Concurrent checks | 50 at the same time |
 
