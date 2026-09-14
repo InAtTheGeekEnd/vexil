@@ -70,6 +70,8 @@ type Engine struct {
 	stopCh  chan struct{}
 	done    chan struct{}
 
+	reloadMu sync.Mutex // one Reload at a time
+
 	mu      sync.Mutex
 	baseCtx context.Context
 	cancel  context.CancelFunc
@@ -185,6 +187,12 @@ func (e *Engine) Stop() {
 // Reload restarts the goroutine of one monitor after an edit, pause,
 // resume or delete. Call it after the store change.
 func (e *Engine) Reload(ctx context.Context, id int64) error {
+	// Two reloads of one monitor must not overlap: both would stop the old
+	// runner and both would start a new one. The store read is inside the
+	// lock, so a reload that read the monitor before a delete cannot start a
+	// runner after the reload that saw the delete.
+	e.reloadMu.Lock()
+	defer e.reloadMu.Unlock()
 	m, err := e.store.Monitor(ctx, id)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return err
@@ -324,6 +332,11 @@ func (e *Engine) initialStatus(ctx context.Context, m store.Monitor) (*Status, e
 
 // startRunnerLocked starts the goroutine for m. The caller holds e.mu.
 func (e *Engine) startRunnerLocked(m store.Monitor) {
+	// A runner in the map is never replaced while it runs. The caller cannot
+	// wait for it here, as it can need e.mu to end.
+	if old := e.runners[m.ID]; old != nil {
+		old.cancel()
+	}
 	ctx, cancel := context.WithCancel(e.baseCtx)
 	r := &runner{cancel: cancel, done: make(chan struct{})}
 	e.runners[m.ID] = r
