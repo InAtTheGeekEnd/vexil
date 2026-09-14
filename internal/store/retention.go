@@ -131,25 +131,36 @@ func (s *Store) Rollup(ctx context.Context, now time.Time) error {
 	return s.rollupDays(ctx, now)
 }
 
-// rollupHours writes the hourly rows of the last finished UTC hour and
-// rewrites them when they exist, as checks that end after an earlier run
-// can come in late. The current hour gets no row: the pages read it from
-// the checks.
+// rollupHours writes the hourly rows of the finished UTC hours in the 30
+// days before now. Oldest first, it fills each hour that has no row yet, as
+// after a downtime. Then it rewrites the last finished hour, as checks that
+// end after an earlier run can come in late. The current hour gets no row:
+// the pages read it from the checks.
 func (s *Store) rollupHours(ctx context.Context, now time.Time) error {
-	return s.rollupHour(ctx, now.UTC().Truncate(time.Hour).Add(-time.Hour))
+	last := now.UTC().Truncate(time.Hour).Add(-time.Hour)
+	for hour := now.UTC().Add(-RawRetention).Truncate(time.Hour); hour.Before(last); hour = hour.Add(time.Hour) {
+		if err := s.rollupHour(ctx, hour, false); err != nil {
+			return err
+		}
+	}
+	return s.rollupHour(ctx, last, true)
 }
 
 // rollupHour writes the hourly rows of one UTC hour for every monitor with
-// checks in it, in one statement.
-func (s *Store) rollupHour(ctx context.Context, hour time.Time) error {
+// checks in it, in one statement. With replace it rewrites the existing
+// rows. Without replace it writes only the missing rows, so a filled hour
+// costs one primary key lookup per monitor.
+func (s *Store) rollupHour(ctx context.Context, hour time.Time, replace bool) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO hourly (monitor_id, hour, total, ok, avg_latency)
 		SELECT monitor_id, ?1, COUNT(*), SUM(ok), CAST(ROUND(AVG(CASE WHEN ok = 1 THEN latency_ms END)) AS INTEGER)
 		FROM checks
-		WHERE monitor_id IN (SELECT id FROM monitors) AND at >= ?1 AND at < ?2
+		WHERE monitor_id IN (SELECT id FROM monitors WHERE ?3 OR NOT EXISTS (
+				SELECT 1 FROM hourly WHERE hourly.monitor_id = monitors.id AND hourly.hour = ?1))
+			AND at >= ?1 AND at < ?2
 		GROUP BY monitor_id
 		ON CONFLICT(monitor_id, hour) DO UPDATE SET total = excluded.total, ok = excluded.ok, avg_latency = excluded.avg_latency`,
-		hour.Unix(), hour.Add(time.Hour).Unix())
+		hour.Unix(), hour.Add(time.Hour).Unix(), replace)
 	return err
 }
 
