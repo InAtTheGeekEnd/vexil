@@ -586,6 +586,7 @@ Settings page, section **Brand**:
 | Binary size | Less than 25 MB |
 | Memory with 100 monitors | Less than 50 MB |
 | Dashboard server response | Less than 50 ms |
+| | Measured: 51 ms with 100 monitors and 30 days of history, default SQLite cache. |
 | Page weight (dashboard, first load) | Less than 200 KB, fonts included |
 | Lighthouse accessibility | 100 |
 

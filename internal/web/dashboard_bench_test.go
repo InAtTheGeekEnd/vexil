@@ -19,6 +19,8 @@ import (
 // BenchmarkDashboard measures the server response of the dashboard with 100
 // monitors and 30 days of checks at the default 60-second interval: 4.32
 // million check rows. SPEC.md section 14 sets the target at less than 50 ms.
+// Almost all of the time is the 24-hour sparkline query, which reads 144,000
+// rows.
 // The setup takes a while, so run the benchmark on its own:
 //
 //	go test -run '^$' -bench BenchmarkDashboard -benchtime 20x ./internal/web
