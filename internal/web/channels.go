@@ -128,8 +128,8 @@ type channelForm struct {
 	ID      int64
 	Type    string
 	Name    string
-	Values  map[string]string // field values to show; secrets are empty
-	HasKeys map[string]bool   // secret fields that have a saved value
+	Values  map[string]string // field values of the chosen type; never a stored secret
+	HasKeys map[string]bool   // secret fields that keep a stored value, shown as saved
 	Errors  map[string]string
 	Types   []channelType
 	Fields  map[string][]notify.Field
@@ -187,12 +187,14 @@ func parseChannelForm(r *http.Request, typ string, old map[string]string) (chann
 	c := store.Channel{Type: typ, Config: map[string]string{}}
 	for _, fd := range notify.Fields(typ) {
 		v := strings.TrimSpace(r.FormValue(typ + "_" + fd.Key))
-		if fd.Secret {
-			if v == "" {
-				v = old[fd.Key]
-			}
+		if fd.Secret && v == "" {
+			// Only a stored secret shows as saved. On create old is nil,
+			// so no secret shows as saved.
+			v = old[fd.Key]
 			f.HasKeys[fd.Key] = v != ""
 		} else {
+			// A typed value goes back into the form after a validation
+			// error, secrets too, so the next submit does not lose it.
 			f.Values[fd.Key] = v
 		}
 		c.Config[fd.Key] = v

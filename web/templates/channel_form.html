@@ -42,7 +42,7 @@
           <span class="secret"><span class="input secret-mask" aria-hidden="true">••••••••••••</span><button type="button" class="btn btn-secondary btn-sm" data-replace>Replace</button></span>
           <input type="{{.Type}}" name="{{$t}}_{{.Key}}" value="" autocomplete="off" spellcheck="false" hidden>
           {{else}}
-          <input type="{{.Type}}" name="{{$t}}_{{.Key}}" value="{{index $f.Values .Key}}" placeholder="{{.Placeholder}}" autocomplete="off" spellcheck="false"{{if eq .Type "number"}} min="{{.Min}}" max="{{.Max}}" inputmode="numeric"{{end}}>
+          <input type="{{.Type}}" name="{{$t}}_{{.Key}}" value="{{if eq $t $f.Type}}{{index $f.Values .Key}}{{else}}{{.Default}}{{end}}" placeholder="{{.Placeholder}}" autocomplete="off" spellcheck="false"{{if eq .Type "number"}} min="{{.Min}}" max="{{.Max}}" inputmode="numeric"{{end}}>
           {{end}}
           {{with index $f.Errors .Key}}<span class="error">{{.}}</span>{{else}}{{with .Hint}}<span class="hint">{{.}}</span>{{end}}{{end}}
         </label>
