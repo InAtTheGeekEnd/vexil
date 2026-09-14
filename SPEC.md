@@ -572,7 +572,7 @@ Settings page, section **Brand**:
 - Session: random 32-byte token in an `HttpOnly`, `SameSite=Lax` cookie. `Secure` when the request is HTTPS. 30-day lifetime. The database stores only a SHA-256 hash of the token.
 - A password change (in Settings or with `vexil reset-password`) deletes all other sessions.
 - CSRF: use `http.CrossOriginProtection` from the standard library.
-- Login rate limit: 5 attempts per minute per IP.
+- Login rate limit: 5 attempts per minute per IP, and per /64 for IPv6.
 - Push tokens: 24 random bytes, URL-safe base64.
 - Channel secrets are stored in the database. The UI never shows them again after save (show `••••` with a Replace button).
 - Security headers: CSP (self only), `X-Content-Type-Options`, `Referrer-Policy`.

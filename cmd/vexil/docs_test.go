@@ -10,6 +10,19 @@ import (
 	"github.com/InAtTheGeekEnd/vexil/internal/brand"
 )
 
+// TestLoginLimitDocs reads SPEC 13. The login limit counts an IPv6 client
+// per /64, so the SPEC must say so.
+func TestLoginLimitDocs(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "SPEC.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "- Login rate limit: 5 attempts per minute per IP, and per /64 for IPv6."
+	if !strings.Contains(string(b), want) {
+		t.Fatalf("SPEC.md does not have the line %q", want)
+	}
+}
+
 // TestRetryDocs reads SPEC 7.4. The service keeps alert retries in memory
 // only, so the SPEC must say that a restart can lose a pending retry.
 func TestRetryDocs(t *testing.T) {
