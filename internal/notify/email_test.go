@@ -12,9 +12,11 @@ import (
 	"math/big"
 	"net"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/InAtTheGeekEnd/vexil/internal/engine"
 	"github.com/InAtTheGeekEnd/vexil/internal/store"
 )
 
@@ -26,11 +28,12 @@ type fakeSMTP struct {
 	data     chan string // the DATA body
 	authSeen chan string
 	envelope chan string // the MAIL and RCPT lines
+	failQuit atomic.Bool // close the connection instead of an answer to QUIT
 }
 
 func newFakeSMTP(t *testing.T, mode string) (*fakeSMTP, string) {
 	t.Helper()
-	f := &fakeSMTP{mode: mode, cert: selfSigned(t), data: make(chan string, 1), authSeen: make(chan string, 1), envelope: make(chan string, 2)}
+	f := &fakeSMTP{mode: mode, cert: selfSigned(t), data: make(chan string, 4), authSeen: make(chan string, 1), envelope: make(chan string, 2)}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -102,6 +105,9 @@ func (f *fakeSMTP) serve(conn net.Conn) {
 			f.data <- b.String()
 			w("250 queued")
 		case cmd == "QUIT":
+			if f.failQuit.Load() {
+				return
+			}
 			w("221 bye")
 			return
 		default:
@@ -179,6 +185,38 @@ func TestEmail(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestEmailQuitFailureIsNotRetried closes the connection instead of an
+// answer to QUIT. The server accepted the message before that, so the alert
+// counts as delivered: no retry, no second mail and no channel error.
+func TestEmailQuitFailureIsNotRetried(t *testing.T) {
+	s, st, slept := newTestService(t)
+	f, addr := newFakeSMTP(t, "plain")
+	f.failQuit.Store(true)
+	host, port, _ := net.SplitHostPort(addr)
+	ctx := context.Background()
+	mon := &store.Monitor{Name: "API", Type: store.TypeHTTP, Target: "https://api.example.com"}
+	if err := st.CreateMonitor(ctx, mon); err != nil {
+		t.Fatal(err)
+	}
+	ch := &store.Channel{Type: store.ChannelEmail, Name: "Mail", Enabled: true, Config: map[string]string{
+		"host": host, "port": port, "from": "a@example.com", "to": "b@example.com"}}
+	if err := st.CreateChannel(ctx, ch); err != nil {
+		t.Fatal(err)
+	}
+
+	s.Notify(ctx, engine.Event{MonitorID: mon.ID, Alert: engine.AlertUp, At: testAt})
+	s.Wait()
+	if n := len(f.data); n != 1 {
+		t.Fatalf("mails = %d, want 1", n)
+	}
+	if len(*slept) != 0 {
+		t.Fatalf("retries after %v, want none", *slept)
+	}
+	if c, _ := st.Channel(ctx, ch.ID); c.LastError != "" {
+		t.Fatalf("channel error = %q, want none", c.LastError)
 	}
 }
 

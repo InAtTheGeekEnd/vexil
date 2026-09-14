@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"log/slog"
 	"mime"
 	"net"
 	"net/mail"
@@ -92,7 +93,12 @@ func (e *email) Send(ctx context.Context, m Message) error {
 	if err := w.Close(); err != nil {
 		return smtpError(err)
 	}
-	return c.Quit()
+	// The server has accepted the message. A failed QUIT does not undo that,
+	// and a retry would send the alert again, so the failure is only logged.
+	if err := c.Quit(); err != nil {
+		slog.Warn("email QUIT failed after the server accepted the message", "host", e.host, "err", err)
+	}
+	return nil
 }
 
 // smtpError keeps the server's reply, which is short, and shortens
