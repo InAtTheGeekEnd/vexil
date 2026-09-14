@@ -47,17 +47,5 @@ changelog:
 release:
   # A tag with a pre-release suffix makes a pre-release on GitHub.
   prerelease: auto
-  # v2.0.0 changes the database schema. Remove this header before the next
-  # release.
-  header: |
-    ## You must recreate the database
-
-    This release changes the database schema. A v1 database does not open: vexil refuses to start on one and prints `The database in ./data is from v1 and must be recreated.` There is no migration.
-
-    1. Stop vexil.
-    2. Back up the data folder (`VEXIL_DATA`, by default `./data`).
-    3. Delete the database file, `vexil.db`. If `vexil.db-wal` and `vexil.db-shm` are in the folder, delete them too.
-    4. Start vexil.
-    5. Open the web UI and set the password at the setup screen.
   footer: |
     Docker image: `ghcr.io/inatthegeekend/vexil:{{ .Version }}`
