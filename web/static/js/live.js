@@ -7,7 +7,7 @@
   if (!body.hasAttribute("data-live") || !window.EventSource) return;
 
   var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  var list = document.getElementById("monitors");
+  var dash = document.getElementById("dash");
   var lastLine = document.getElementById("last-line");
   var baseTitle = document.title.replace(/^\(\d+\) /, "");
   // The server links the tab icon for the state at load and names the
@@ -63,7 +63,7 @@
 
   function onCheck(ev) {
     var el = null;
-    if (list) el = list.querySelector('.mon-row[data-id="' + ev.id + '"] .mon-checked');
+    if (dash) el = dash.querySelector('.mon-row[data-id="' + ev.id + '"] .mon-checked');
     if (!el && lastLine && +lastLine.dataset.monitor === ev.id) el = lastLine;
     if (!el) return;
     el.dataset.at = String(Math.floor(Date.now() / 1000));
@@ -82,8 +82,8 @@
       reloadWhenVisible();
       return;
     }
-    if (!list) return;
-    var row = list.querySelector('.mon-row[data-id="' + ev.id + '"]');
+    if (!dash) return;
+    var row = dash.querySelector('.mon-row[data-id="' + ev.id + '"]');
     if (!row) return;
     var old = row.dataset.state;
     if (old === ev.state) return;
@@ -102,40 +102,59 @@
       checked.removeAttribute("data-at");
       checked.textContent = "Waiting for the first " + (checked.dataset.kind === "push" ? "push" : "check");
     }
+    // A DOWN row lifts into the strip above the groups. A recovered row
+    // goes back to its place in its group.
     if (ev.state === "down") {
-      list.insertBefore(row, firstRow(function (r) { return r.dataset.state !== "down"; }, row));
+      dash.querySelector(".mon-strip").appendChild(row);
     } else if (old === "down") {
-      var pos = +row.dataset.pos;
-      list.insertBefore(row, firstRow(function (r) { return r.dataset.state !== "down" && +r.dataset.pos > pos; }, row));
+      goHome(row);
     }
     slide(before);
     headline();
   }
 
-  // firstRow returns the first row other than skip that matches, or null.
-  function firstRow(match, skip) {
-    var rows = list.querySelectorAll(".mon-row");
+  // goHome puts a row into its group before the first row with a higher
+  // position. A row whose group is not on the page goes to the monitors in
+  // no group.
+  function goHome(row) {
+    var home = dash.querySelector('.monitors[data-group="' + row.dataset.group + '"]') ||
+      dash.querySelector('.monitors[data-group="0"]');
+    var pos = +row.dataset.pos;
+    var rows = home.querySelectorAll(".mon-row");
+    var next = null;
     for (var i = 0; i < rows.length; i++) {
-      if (rows[i] !== skip && match(rows[i])) return rows[i];
+      if (+rows[i].dataset.pos > pos) { next = rows[i]; break; }
     }
-    return null;
+    home.insertBefore(row, next);
   }
 
-  // Rows that change state slide to their new position (FLIP).
+  // Rows that change state slide to their new position (FLIP). The groups
+  // and the list of monitors in no group slide too, because the strip above
+  // them grows or shrinks. A row inside a sliding box slides by the rest of
+  // its move, so the two animations add up.
+  var sliding = ".dash-group, .mon-ungrouped, .mon-row";
+
   function positions() {
     var m = new Map();
-    list.querySelectorAll(".mon-row").forEach(function (r) { m.set(r, r.getBoundingClientRect().top); });
+    dash.querySelectorAll(sliding).forEach(function (el) {
+      if (el.getClientRects().length) m.set(el, el.getBoundingClientRect().top);
+    });
     return m;
   }
 
   function slide(before) {
     if (reduced || !Element.prototype.animate) return;
-    list.querySelectorAll(".mon-row").forEach(function (r) {
-      var was = before.get(r);
-      if (was === undefined) return;
-      var d = was - r.getBoundingClientRect().top;
+    var moved = new Map();
+    before.forEach(function (top, el) {
+      if (el.getClientRects().length) moved.set(el, top - el.getBoundingClientRect().top);
+    });
+    moved.forEach(function (d, el) {
+      if (el.classList.contains("mon-row")) {
+        var box = el.parentNode.closest(".dash-group, .mon-ungrouped");
+        if (box && moved.has(box)) d -= moved.get(box);
+      }
       if (!d) return;
-      r.animate([{ transform: "translateY(" + d + "px)" }, { transform: "none" }], { duration: 150, easing: "ease-out" });
+      el.animate([{ transform: "translateY(" + d + "px)" }, { transform: "none" }], { duration: 150, easing: "ease-out" });
     });
   }
 
@@ -144,7 +163,7 @@
     var h = document.querySelector(".dash-head h1");
     if (!h) return;
     var down = 0, pending = 0, active = 0;
-    list.querySelectorAll(".mon-row").forEach(function (r) {
+    dash.querySelectorAll(".mon-row").forEach(function (r) {
       var s = r.dataset.state;
       if (s === "down") down++;
       if (s === "pending") pending++;

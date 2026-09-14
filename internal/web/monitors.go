@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -51,10 +50,21 @@ var typeLabels = map[string]string{
 // --- Dashboard ---
 
 type dashboardContent struct {
-	Headline string
-	State    string // state class of the headline dot
-	Count    string // "3 monitors"
-	Rows     []monitorRow
+	Headline  string
+	State     string // state class of the headline dot
+	Count     string // "3 monitors"
+	Monitors  int
+	Down      []monitorRow // the DOWN strip above the groups
+	Groups    []dashGroup
+	Ungrouped []monitorRow // the monitors in no group, below the groups
+}
+
+// dashGroup is a group heading with the rows of its monitors that are not
+// down.
+type dashGroup struct {
+	ID   int64
+	Name string
+	Rows []monitorRow
 }
 
 type monitorRow struct {
@@ -70,6 +80,7 @@ type monitorRow struct {
 	CheckedAt  int64  // unix seconds of the newest result, 0 when there is none
 	Kind       string // "check" or "push", the verb for the checked line
 	Position   int
+	Group      int64 // the id of the group the row belongs in, 0 for none
 }
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
@@ -79,8 +90,19 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
+	groups, err := s.store.Groups(ctx)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
 	now := time.Now()
-	var content dashboardContent
+	content := dashboardContent{Monitors: len(monitors), Groups: make([]dashGroup, len(groups))}
+	index := make(map[int64]int, len(groups)) // group id to index in content.Groups
+	for i, g := range groups {
+		content.Groups[i] = dashGroup{ID: g.ID, Name: g.Name}
+		index[g.ID] = i
+	}
+	downRows := map[int64][]monitorRow{} // the DOWN rows by group, 0 for none
 	var down, pending, active int
 	for _, m := range monitors {
 		st := s.monitorStatus(m)
@@ -124,13 +146,26 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			}
 			row.Spark = sparkline(fmt.Sprintf("spark-%d", m.ID), values)
 		}
-		content.Rows = append(content.Rows, row)
+		// The store returns the drag order, so appending keeps it.
+		gi, grouped := index[m.GroupID]
+		if grouped {
+			row.Group = m.GroupID
+		}
+		switch {
+		case st.State == engine.Down:
+			downRows[row.Group] = append(downRows[row.Group], row)
+		case grouped:
+			content.Groups[gi].Rows = append(content.Groups[gi].Rows, row)
+		default:
+			content.Ungrouped = append(content.Ungrouped, row)
+		}
 	}
-	// Down monitors first, then the drag order. The store returns the drag
-	// order, so a stable sort keeps it inside each group.
-	sort.SliceStable(content.Rows, func(i, j int) bool {
-		return content.Rows[i].State == "down" && content.Rows[j].State != "down"
-	})
+	// The strip lists the DOWN rows in page order: by group, then the rows
+	// in no group.
+	for _, g := range content.Groups {
+		content.Down = append(content.Down, downRows[g.ID]...)
+	}
+	content.Down = append(content.Down, downRows[0]...)
 	content.Headline, content.State = headline(down, pending, active)
 	content.Count = plural(len(monitors), "monitor")
 	s.render(w, http.StatusOK, "dashboard.html", pageData{Content: content, Live: true, Down: down, Nav: "dashboard"})
@@ -336,27 +371,58 @@ func (s *Server) handleMonitorDelete(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
-// handleReorder saves the drag order. The body is a form with one "id"
-// value per monitor in display order.
+// handleReorder saves the dashboard layout. The body is a form with one
+// "group" value per group in display order, and one "id" value per monitor
+// in display order with a matching "in" value: the id of its group, or 0
+// for none. A DOWN monitor waits in the strip, so the save skips it: it
+// keeps its group and position.
 func (s *Server) handleReorder(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "bad form", http.StatusBadRequest)
 		return
 	}
-	var ids []int64
-	for _, v := range r.Form["id"] {
-		id, err := strconv.ParseInt(v, 10, 64)
-		if err != nil {
-			http.Error(w, "bad id", http.StatusBadRequest)
-			return
-		}
-		ids = append(ids, id)
+	groups, okGroups := parseIDs(r.Form["group"])
+	ids, okIDs := parseIDs(r.Form["id"])
+	in, okIn := parseIDs(r.Form["in"])
+	if !okGroups || !okIDs || !okIn || len(ids) != len(in) {
+		http.Error(w, "bad layout", http.StatusBadRequest)
+		return
 	}
-	if err := s.store.ReorderMonitors(r.Context(), ids); err != nil {
+	var monitors []store.Placement
+	for i, id := range ids {
+		if s.isDown(id) {
+			continue
+		}
+		monitors = append(monitors, store.Placement{ID: id, GroupID: in[i]})
+	}
+	if err := s.store.SaveLayout(r.Context(), groups, monitors); err != nil {
 		s.serverError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// parseIDs parses form values as ids. It returns false when a value is not
+// a number.
+func parseIDs(values []string) ([]int64, bool) {
+	out := make([]int64, 0, len(values))
+	for _, v := range values {
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return nil, false
+		}
+		out = append(out, id)
+	}
+	return out, true
+}
+
+// isDown reports whether the engine has the monitor as DOWN.
+func (s *Server) isDown(id int64) bool {
+	if s.engine == nil {
+		return false
+	}
+	st, ok := s.engine.Status(id)
+	return ok && st.State == engine.Down
 }
 
 // reload tells the engine about a store change. It is a no-op without an

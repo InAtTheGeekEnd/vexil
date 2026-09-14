@@ -3,7 +3,7 @@
 {{template "header" .}}
 <main class="container page">
 {{with .Content}}
-{{if .Rows}}
+{{if .Monitors}}
   <div class="page-head dash-head">
     <div>
       <h1 class="t-28"><span class="dot dot-{{.State}}" aria-hidden="true"></span>{{.Headline}}</h1>
@@ -11,19 +11,27 @@
     </div>
     <a class="btn btn-primary" href="/monitors/new">Add monitor</a>
   </div>
-  <ul class="monitors" id="monitors">
-  {{range .Rows}}
-    <li class="mon-row mon-{{.State}}" data-id="{{.ID}}" data-state="{{.State}}" data-pos="{{.Position}}">
-      <button type="button" class="mon-handle" aria-label="Move {{.Name}}" title="Drag to reorder, or press the up or down arrow key"><svg width="12" height="16" viewBox="0 0 12 16" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="3" r="1.4"/><circle cx="8.5" cy="3" r="1.4"/><circle cx="3.5" cy="8" r="1.4"/><circle cx="8.5" cy="8" r="1.4"/><circle cx="3.5" cy="13" r="1.4"/><circle cx="8.5" cy="13" r="1.4"/></svg></button>
-      <span class="dot dot-{{.State}}"><span class="sr-only">{{.StateLabel}}</span></span>
-      <span class="mon-name"><a class="mon-link w-600" href="/monitors/{{.ID}}" title="{{.Name}}">{{.Name}}</a><span class="muted small">{{.Target}}</span></span>
-      <span class="mon-uptime uptime" role="img" aria-label="Uptime for the last 30 days: {{if .UptimePct}}{{.UptimePct}}%{{else}}no data yet{{end}}">{{range .Uptime}}<span class="seg {{.Class}}" data-tip="{{.Tip}}"></span>{{end}}</span>
-      <span class="mon-pct">{{if .UptimePct}}{{.UptimePct}}<small>%</small>{{else}}<span class="muted small">No data</span>{{end}}</span>
-      <span class="mon-spark">{{.Spark}}</span>
-      <span class="mon-checked muted small" data-kind="{{.Kind}}"{{if .CheckedAt}} data-at="{{.CheckedAt}}"{{end}}>{{.Checked}}</span>
-    </li>
-  {{end}}
-  </ul>
+  <div class="dash" id="dash">
+    <ul class="monitors mon-strip" aria-label="Down monitors">
+    {{range .Down}}{{template "mon-row" .}}{{end}}
+    </ul>
+    {{with .Groups}}<div class="dash-groups" id="groups">
+    {{range .}}
+      <section class="dash-group" data-group="{{.ID}}" aria-labelledby="group-{{.ID}}">
+        <div class="group-head">
+          <button type="button" class="group-handle" aria-label="Move group {{.Name}}" title="Drag to reorder, or press the up or down arrow key">{{template "grip"}}</button>
+          <h2 id="group-{{.ID}}" title="{{.Name}}">{{.Name}}</h2>
+        </div>
+        <ul class="monitors" data-group="{{.ID}}" data-empty="Drag a monitor here.">
+        {{range .Rows}}{{template "mon-row" .}}{{end}}
+        </ul>
+      </section>
+    {{end}}
+    </div>{{end}}
+    <ul class="monitors mon-ungrouped" data-group="0" data-empty="Drag a monitor here to take it out of its group.">
+    {{range .Ungrouped}}{{template "mon-row" .}}{{end}}
+    </ul>
+  </div>
 {{else}}
   <section class="empty">
     <p class="lead">No monitors yet.</p>
@@ -34,3 +42,15 @@
 </main>
 {{template "footer" .}}
 {{end}}
+
+{{define "grip"}}<svg width="12" height="16" viewBox="0 0 12 16" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="3" r="1.4"/><circle cx="8.5" cy="3" r="1.4"/><circle cx="3.5" cy="8" r="1.4"/><circle cx="8.5" cy="8" r="1.4"/><circle cx="3.5" cy="13" r="1.4"/><circle cx="8.5" cy="13" r="1.4"/></svg>{{end}}
+
+{{define "mon-row"}}<li class="mon-row mon-{{.State}}" data-id="{{.ID}}" data-state="{{.State}}" data-group="{{.Group}}" data-pos="{{.Position}}">
+      <button type="button" class="mon-handle" aria-label="Move {{.Name}}" title="Drag to reorder, or press the up or down arrow key">{{template "grip"}}</button>
+      <span class="dot dot-{{.State}}"><span class="sr-only">{{.StateLabel}}</span></span>
+      <span class="mon-name"><a class="mon-link w-600" href="/monitors/{{.ID}}" title="{{.Name}}">{{.Name}}</a><span class="muted small">{{.Target}}</span></span>
+      <span class="mon-uptime uptime" role="img" aria-label="Uptime for the last 30 days: {{if .UptimePct}}{{.UptimePct}}%{{else}}no data yet{{end}}">{{range .Uptime}}<span class="seg {{.Class}}" data-tip="{{.Tip}}"></span>{{end}}</span>
+      <span class="mon-pct">{{if .UptimePct}}{{.UptimePct}}<small>%</small>{{else}}<span class="muted small">No data</span>{{end}}</span>
+      <span class="mon-spark">{{.Spark}}</span>
+      <span class="mon-checked muted small" data-kind="{{.Kind}}"{{if .CheckedAt}} data-at="{{.CheckedAt}}"{{end}}>{{.Checked}}</span>
+    </li>{{end}}

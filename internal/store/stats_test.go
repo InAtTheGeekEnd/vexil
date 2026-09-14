@@ -6,30 +6,6 @@ import (
 	"time"
 )
 
-func TestReorderMonitors(t *testing.T) {
-	s := openTest(t)
-	ctx := context.Background()
-	var ids []int64
-	for _, n := range []string{"a", "b", "c"} {
-		m := &Monitor{Name: n, Type: TypeTCP, Target: "x:1"}
-		if err := s.CreateMonitor(ctx, m); err != nil {
-			t.Fatal(err)
-		}
-		ids = append(ids, m.ID)
-	}
-	if err := s.ReorderMonitors(ctx, []int64{ids[2], ids[0], ids[1]}); err != nil {
-		t.Fatal(err)
-	}
-	all, err := s.Monitors(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := []string{all[0].Name, all[1].Name, all[2].Name}
-	if got[0] != "c" || got[1] != "a" || got[2] != "b" {
-		t.Fatalf("order = %v, want [c a b]", got)
-	}
-}
-
 func TestDailyStatsAndLatencySeries(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()

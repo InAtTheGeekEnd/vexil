@@ -150,3 +150,79 @@ func TestGroupsMigration(t *testing.T) {
 		t.Fatalf("groups = %+v, %v", groups, err)
 	}
 }
+
+func TestSaveLayout(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	a, b := &Group{Name: "A"}, &Group{Name: "B"}
+	for _, g := range []*Group{a, b} {
+		if err := s.CreateGroup(ctx, g); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var m [5]int64 // five monitors in no group, at positions 1 to 5
+	for i := range m {
+		mon := &Monitor{Name: "m", Type: TypeHTTP, Target: "https://example.com"}
+		if err := s.CreateMonitor(ctx, mon); err != nil {
+			t.Fatal(err)
+		}
+		m[i] = mon.ID
+	}
+
+	type place struct {
+		group int64
+		pos   int
+	}
+	// The steps run in order. Each one starts from the layout of the one
+	// before.
+	steps := []struct {
+		name       string
+		groups     []int64
+		monitors   []Placement
+		want       [5]place
+		wantGroups []string
+	}{
+		{
+			name:       "fill the groups and order them",
+			groups:     []int64{b.ID, a.ID},
+			monitors:   []Placement{{m[2], a.ID}, {m[0], a.ID}, {m[1], b.ID}, {m[3], 0}, {m[4], 0}},
+			want:       [5]place{{a.ID, 2}, {b.ID, 1}, {a.ID, 1}, {0, 1}, {0, 2}},
+			wantGroups: []string{"B", "A"},
+		},
+		{
+			name:       "a missing monitor keeps its group and position, and the others skip it",
+			groups:     []int64{a.ID, b.ID},
+			monitors:   []Placement{{m[2], a.ID}, {m[1], a.ID}, {m[4], 0}, {m[3], 0}},
+			want:       [5]place{{a.ID, 2}, {a.ID, 3}, {a.ID, 1}, {0, 2}, {0, 1}},
+			wantGroups: []string{"A", "B"},
+		},
+		{
+			name:       "an unknown group means no group, and groups not listed keep their order",
+			monitors:   []Placement{{m[2], 999}, {m[1], a.ID}, {m[4], 0}, {m[3], 0}},
+			want:       [5]place{{a.ID, 2}, {a.ID, 1}, {0, 1}, {0, 3}, {0, 2}},
+			wantGroups: []string{"A", "B"},
+		},
+	}
+	for _, tt := range steps {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := s.SaveLayout(ctx, tt.groups, tt.monitors); err != nil {
+				t.Fatal(err)
+			}
+			for i, w := range tt.want {
+				got, err := s.Monitor(ctx, m[i])
+				if err != nil || got.GroupID != w.group || got.Position != w.pos {
+					t.Errorf("monitor %d = group %d position %d (%v), want group %d position %d", i, got.GroupID, got.Position, err, w.group, w.pos)
+				}
+			}
+			groups, err := s.Groups(ctx)
+			if err != nil || len(groups) != len(tt.wantGroups) {
+				t.Fatalf("groups = %+v, %v", groups, err)
+			}
+			for i, g := range groups {
+				if g.Name != tt.wantGroups[i] {
+					t.Errorf("group %d = %q, want the order %v", i, g.Name, tt.wantGroups)
+				}
+			}
+		})
+	}
+}

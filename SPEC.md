@@ -298,9 +298,10 @@ CREATE TABLE monitors (
   interval_s  INTEGER NOT NULL DEFAULT 60,
   public      INTEGER NOT NULL DEFAULT 0,
   paused      INTEGER NOT NULL DEFAULT 0,
-  position    INTEGER NOT NULL DEFAULT 0,
-  group_id    INTEGER,                -- monitor_groups.id; NULL means in no group
-  created_at  INTEGER NOT NULL
+  position    INTEGER NOT NULL DEFAULT 0,  -- drag order inside the group, from 1
+  created_at  INTEGER NOT NULL,
+  cert_warned_at INTEGER,             -- expiry of the certificate the expiry warning was sent for
+  group_id    INTEGER                 -- monitor_groups.id; NULL means in no group
 );
 
 CREATE TABLE monitor_groups (         -- not "groups": GROUPS is an SQLite keyword
@@ -343,7 +344,9 @@ CREATE TABLE channels (
   type        TEXT NOT NULL,
   name        TEXT NOT NULL,
   config      TEXT NOT NULL,          -- JSON
-  enabled     INTEGER NOT NULL DEFAULT 1
+  enabled     INTEGER NOT NULL DEFAULT 1,
+  last_error  TEXT,                   -- the last failed delivery; NULL when the last one worked
+  last_error_at INTEGER               -- unix seconds of that failure
 );
 
 CREATE TABLE sessions (
@@ -420,9 +423,14 @@ On failure, the failed part shows a short reason, for example `"database": "lock
   - Response time sparkline (last 24 hours).
   - "Checked 12s ago" in muted text.
 - The whole row is a link to the detail page.
-- Drag to reorder.
-- The rows update live through SSE. No page reload.
-- Down monitors move to the top.
+- Groups show in position order. Each group is a heading with its monitors below it. A group with no monitors still shows its heading, so the user can drag monitors into it.
+- Monitors in no group go below all the groups, with no heading.
+- A DOWN monitor lifts out of its group into a strip at the top, above all the groups. The strip does not show group names. The monitor returns to its place in its group when it recovers.
+- Drag a group heading to reorder the groups. Its monitors move with it.
+- Drag a monitor row to move it inside its group, into another group, or into the monitors in no group below the groups.
+- Both drags save on drop. Each grip also moves with the up and down arrow keys.
+- A monitor in the DOWN strip cannot be dragged. Its stored group and position do not change while it is there.
+- The rows update live through SSE. No page reload. A state change slides the row between the strip and its group.
 
 ### 9.4 Monitor detail
 

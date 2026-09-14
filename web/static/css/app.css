@@ -576,8 +576,8 @@ body.auth {
 .mon-row:hover { background: color-mix(in srgb, var(--text) 3%, transparent); }
 .mon-row.mon-down { background: color-mix(in srgb, var(--down) 3%, transparent); }
 .mon-row.mon-down:hover { background: color-mix(in srgb, var(--down) 6%, transparent); }
-.mon-row.dragging { opacity: 0.4; }
-.monitors.dragging, .monitors.dragging * { cursor: grabbing; user-select: none; }
+.mon-row.dragging, .dash-group.dragging { opacity: 0.4; }
+.dash[data-drag], .dash[data-drag] * { cursor: grabbing; user-select: none; }
 
 /* The name is the link. Its ::after covers the whole row, so a click
    anywhere opens the monitor. The grip and the uptime bar sit above it. */
@@ -587,8 +587,7 @@ body.auth {
 .mon-link:focus-visible::after { outline: 2px solid var(--accent-text); outline-offset: -2px; }
 .mon-handle, .mon-uptime { position: relative; z-index: 1; }
 
-.mon-handle {
-  grid-area: grip;
+.mon-handle, .group-handle {
   align-self: stretch;
   display: flex;
   align-items: center;
@@ -604,10 +603,45 @@ body.auth {
   -webkit-user-select: none;
   user-select: none;
 }
-.mon-handle:hover, .mon-row:hover .mon-handle, .mon-handle:focus-visible { opacity: 1; }
-.mon-handle:active { cursor: grabbing; }
-.mon-handle:focus-visible { outline: 2px solid var(--accent-text); outline-offset: -2px; border-radius: 4px; }
-.mon-handle svg { width: 12px; height: 16px; }
+.mon-handle { grid-area: grip; }
+.mon-handle:hover, .mon-row:hover .mon-handle, .mon-handle:focus-visible,
+.group-handle:hover, .group-head:hover .group-handle, .group-handle:focus-visible { opacity: 1; }
+.mon-handle:active, .group-handle:active { cursor: grabbing; }
+.mon-handle:focus-visible, .group-handle:focus-visible { outline: 2px solid var(--accent-text); outline-offset: -2px; border-radius: 4px; }
+.mon-handle svg, .group-handle svg { width: 12px; height: 16px; }
+/* A DOWN row waits in the strip until it recovers. It cannot move. */
+.mon-strip .mon-handle { visibility: hidden; }
+
+/* The DOWN strip, then the groups in order, then the monitors in no group.
+   The group heading lines up its grip with the row grips and its name with
+   the status dots. */
+.dash, .dash-groups { display: flex; flex-direction: column; gap: 32px; }
+.dash-group { display: flex; flex-direction: column; gap: 8px; }
+.group-head {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  min-height: 32px;
+}
+.group-head h2 { margin: 0; font-size: 16px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* An empty strip hides. An empty group shows a dashed place to drop a row.
+   The list of monitors in no group shows that place only during a row drag. */
+.mon-strip:not(:has(.mon-row)), .mon-ungrouped:not(:has(.mon-row)) { display: none; }
+.dash-group .monitors:not(:has(.mon-row)),
+.dash[data-drag="row"] .mon-ungrouped:not(:has(.mon-row)) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 56px;
+  padding: 12px 20px;
+  border-style: dashed;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+.monitors:not(:has(.mon-row))::before { content: attr(data-empty); }
 .mon-row > .dot { grid-area: dot; }
 .mon-name { grid-area: name; display: flex; flex-direction: column; min-width: 0; }
 .mon-name > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -268,14 +268,18 @@ func TestDashboardOrderAndReorder(t *testing.T) {
 		}
 	}
 
-	// Reorder: Charlie, Alpha, Bravo. Down still sorts first on the page.
-	res := postForm(t, c, ts.URL+"/monitors/reorder", url.Values{"id": {
-		strconv.FormatInt(ids[2], 10), strconv.FormatInt(ids[0], 10), strconv.FormatInt(ids[1], 10)}})
+	// Reorder: Charlie, Alpha, Bravo, all in no group. Bravo is down, so the
+	// save skips it: it keeps position 2, and the others skip that position.
+	// Down still sorts first on the page.
+	res := postForm(t, c, ts.URL+"/monitors/reorder", url.Values{
+		"id": {strconv.FormatInt(ids[2], 10), strconv.FormatInt(ids[0], 10), strconv.FormatInt(ids[1], 10)},
+		"in": {"0", "0", "0"},
+	})
 	if res.StatusCode != http.StatusNoContent {
 		t.Fatalf("reorder = %d", res.StatusCode)
 	}
 	all, _ := st.Monitors(ctx)
-	if all[0].Name != "Charlie" || all[1].Name != "Alpha" || all[2].Name != "Bravo" {
+	if all[0].Name != "Charlie" || all[1].Name != "Bravo" || all[2].Name != "Alpha" || all[1].Position != 2 {
 		t.Fatalf("stored order = %s %s %s", all[0].Name, all[1].Name, all[2].Name)
 	}
 	b = body(t, get(t, c, ts.URL+"/"))
