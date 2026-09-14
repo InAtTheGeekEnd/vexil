@@ -91,7 +91,9 @@ func (s *Server) handleMonitor(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
-	day, err := s.store.Summary(ctx, m.ID, now.Add(-24*time.Hour))
+	// The 24-hour tiles read 23 finished hours and the current hour, as the
+	// dashboard sparkline does.
+	day, err := s.store.Summary(ctx, m.ID, now.UTC().Truncate(time.Hour).Add(-23*time.Hour))
 	if err != nil {
 		s.serverError(w, err)
 		return
