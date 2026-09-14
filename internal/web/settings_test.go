@@ -53,6 +53,27 @@ func pngHeaderOnly(w, h uint32) []byte {
 	return b.Bytes()
 }
 
+// TestSettingsBrokenUpload posts a multipart body that ends in the middle of
+// a part, as a broken upload does. The page must say that the form could not
+// be read, not that the logo is too large.
+func TestSettingsBrokenUpload(t *testing.T) {
+	s, st := newTestServer(t, Options{})
+	ts, c := loggedIn(t, s, st)
+	broken := "--zzz\r\nContent-Disposition: form-data; name=\"name\"\r\n\r\nAcme"
+	res, err := c.Post(ts.URL+"/settings", "multipart/form-data; boundary=zzz", strings.NewReader(broken))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { res.Body.Close() })
+	page := body(t, res)
+	if res.StatusCode != http.StatusBadRequest || !strings.Contains(page, "The form could not be read. Reload the page and try again.") {
+		t.Fatalf("broken upload = %d, want 400 with the read error", res.StatusCode)
+	}
+	if strings.Contains(page, "The logo must be 512 KB or smaller.") {
+		t.Fatal("a broken upload says the logo is too large")
+	}
+}
+
 // TestSettingsRefusesBadPNG uploads PNG logos that the server cannot draw
 // safely. Each must get a form error, and nothing may be saved: a saved one
 // would run the decoder again at every start. A small real PNG is saved.
