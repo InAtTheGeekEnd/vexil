@@ -101,6 +101,107 @@ func (s *Store) DailyStats(ctx context.Context, monitorID int64, since, now time
 	return out, inc.Err()
 }
 
+// DayTotals are the check counts of one monitor on one UTC day.
+type DayTotals struct {
+	Total int
+	OK    int
+}
+
+// DailyTotals returns the daily rows of every monitor for the UTC days from
+// first to last, by monitor id and day (YYYY-MM-DD), in one query.
+func (s *Store) DailyTotals(ctx context.Context, first, last time.Time) (map[int64]map[string]DayTotals, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT monitor_id, day, total, ok FROM daily WHERE day >= ? AND day <= ?`,
+		first.UTC().Format("2006-01-02"), last.UTC().Format("2006-01-02"))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]map[string]DayTotals{}
+	for rows.Next() {
+		var id int64
+		var day string
+		var t DayTotals
+		if err := rows.Scan(&id, &day, &t.Total, &t.OK); err != nil {
+			return nil, err
+		}
+		if out[id] == nil {
+			out[id] = map[string]DayTotals{}
+		}
+		out[id][day] = t
+	}
+	return out, rows.Err()
+}
+
+// IncidentDays returns the number of incidents that started on each UTC day
+// since a time, by monitor id and day, in one query.
+func (s *Store) IncidentDays(ctx context.Context, since time.Time) (map[int64]map[string]int, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT monitor_id, strftime('%Y-%m-%d', started_at, 'unixepoch'), COUNT(*)
+		FROM incidents WHERE started_at >= ? GROUP BY 1, 2`, since.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]map[string]int{}
+	for rows.Next() {
+		var id int64
+		var day string
+		var n int
+		if err := rows.Scan(&id, &day, &n); err != nil {
+			return nil, err
+		}
+		if out[id] == nil {
+			out[id] = map[string]int{}
+		}
+		out[id][day] = n
+	}
+	return out, rows.Err()
+}
+
+// Bucket holds the checks of one monitor in one time bucket.
+type Bucket struct {
+	At         time.Time // start of the bucket
+	Total      int
+	OK         int
+	LatencyMS  int64 // average latency of the successful checks
+	HasLatency bool  // false when no check in the bucket succeeded
+}
+
+// RecentBuckets returns the checks of every monitor since a time, grouped
+// into buckets of the given size counted from the Unix epoch, oldest first,
+// by monitor id, in one query. A bucket of 30 minutes starts at a UTC
+// midnight, so the buckets from today's midnight on add up to today.
+func (s *Store) RecentBuckets(ctx context.Context, since time.Time, bucket time.Duration) (map[int64][]Bucket, error) {
+	secs := int64(bucket / time.Second)
+	if secs <= 0 {
+		secs = 60
+	}
+	// The IN over the monitors lets SQLite use the index on (monitor_id, at)
+	// for the time range.
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT monitor_id, (at / ?) * ?, COUNT(*), SUM(ok), AVG(CASE WHEN ok = 1 THEN latency_ms END)
+		FROM checks
+		WHERE monitor_id IN (SELECT id FROM monitors) AND at >= ?
+		GROUP BY 1, 2 ORDER BY 1, 2`, secs, secs, since.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64][]Bucket{}
+	for rows.Next() {
+		var id, at int64
+		var b Bucket
+		var avg sql.NullFloat64
+		if err := rows.Scan(&id, &at, &b.Total, &b.OK, &avg); err != nil {
+			return nil, err
+		}
+		b.At = time.Unix(at, 0)
+		b.LatencyMS, b.HasLatency = int64(avg.Float64+0.5), avg.Valid
+		out[id] = append(out[id], b)
+	}
+	return out, rows.Err()
+}
+
 // LatencyPoint is the average latency of successful checks in one time bucket.
 type LatencyPoint struct {
 	At        time.Time // start of the bucket

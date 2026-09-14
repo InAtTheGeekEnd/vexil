@@ -65,6 +65,10 @@ func BenchmarkDashboard(b *testing.B) {
 	if err := db.Close(); err != nil {
 		b.Fatal(err)
 	}
+	// The hourly job writes the daily rows of the days before today.
+	if err := st.RollupDays(ctx, time.Now()); err != nil {
+		b.Fatal(err)
+	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	// The engine is not started, so no check runs during the benchmark.

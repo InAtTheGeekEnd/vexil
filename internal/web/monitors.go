@@ -97,6 +97,27 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now()
+	// Three queries for all monitors, not a few per monitor (SPEC.md section
+	// 14: less than 50 ms). The bar and the percent read the daily rows of the
+	// days before today. Today and the sparkline come from the checks of the
+	// last 24 hours.
+	today := now.UTC().Truncate(24 * time.Hour)
+	first := today.AddDate(0, 0, -29)
+	daily, err := s.store.DailyTotals(ctx, first, today.AddDate(0, 0, -1))
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	incidents, err := s.store.IncidentDays(ctx, first)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	buckets, err := s.store.RecentBuckets(ctx, now.Add(-24*time.Hour), 30*time.Minute)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
 	content := dashboardContent{Monitors: len(monitors), Groups: make([]dashGroup, len(groups))}
 	index := make(map[int64]int, len(groups)) // group id to index in content.Groups
 	for i, g := range groups {
@@ -128,22 +149,14 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		if !m.Paused {
 			active++
 		}
-		days, err := s.store.DailyStats(ctx, m.ID, now.AddDate(0, 0, -29), now)
-		if err != nil {
-			s.serverError(w, err)
-			return
-		}
-		row.Uptime, row.UptimePct = uptimeBar(days)
-		series, err := s.store.LatencySeries(ctx, m.ID, now.Add(-24*time.Hour), 30*time.Minute)
-		if err != nil {
-			s.serverError(w, err)
-			return
-		}
-		if len(series) >= 2 {
-			values := make([]float64, len(series))
-			for i, p := range series {
-				values[i] = float64(p.LatencyMS)
+		row.Uptime, row.UptimePct = uptimeBar(dashboardDays(first, today, daily[m.ID], incidents[m.ID], buckets[m.ID]))
+		var values []float64
+		for _, b := range buckets[m.ID] {
+			if b.HasLatency {
+				values = append(values, float64(b.LatencyMS))
 			}
+		}
+		if len(values) >= 2 {
 			row.Spark = sparkline(fmt.Sprintf("spark-%d", m.ID), values)
 		}
 		// The store returns the drag order, so appending keeps it.
@@ -183,6 +196,27 @@ func headline(down, pending, active int) (string, string) {
 		return "Waiting for the first checks", "pending"
 	}
 	return "All systems operational", "up"
+}
+
+// dashboardDays builds the 30 days of the uptime bar of one monitor: the
+// days before today from its daily rows, and today from its buckets of the
+// last 24 hours.
+func dashboardDays(first, today time.Time, daily map[string]store.DayTotals, incidents map[string]int, buckets []store.Bucket) []store.DayStat {
+	var days []store.DayStat
+	for d := first; d.Before(today); d = d.AddDate(0, 0, 1) {
+		key := d.Format("2006-01-02")
+		t := daily[key]
+		days = append(days, store.DayStat{Day: key, Total: t.Total, OK: t.OK, Incidents: incidents[key]})
+	}
+	key := today.Format("2006-01-02")
+	current := store.DayStat{Day: key, Incidents: incidents[key]}
+	for _, b := range buckets {
+		if !b.At.Before(today) {
+			current.Total += b.Total
+			current.OK += b.OK
+		}
+	}
+	return append(days, current)
 }
 
 // uptimeBar turns 30 day stats into bar segments and a 30-day percentage.
