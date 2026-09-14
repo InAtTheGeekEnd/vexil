@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -20,6 +21,38 @@ func (s *stuck) Check(context.Context) check.Result {
 	s.started <- struct{}{}
 	<-s.release
 	return check.Result{OK: true}
+}
+
+// slowNotifier takes a moment before it records an alert, as a notifier that
+// reads the store first does.
+type slowNotifier struct{ recordingNotifier }
+
+func (n *slowNotifier) Notify(ctx context.Context, ev Event) {
+	time.Sleep(300 * time.Millisecond)
+	n.recordingNotifier.Notify(ctx, ev)
+}
+
+// TestStopWaitsForAlerts turns a monitor DOWN and stops the engine at once.
+// The engine hands the DOWN alert to the notifier in a goroutine. Stop must
+// wait for that call: main closes the database right after Stop, so an alert
+// that is still on its way is lost.
+func TestStopWaitsForAlerts(t *testing.T) {
+	env := newEnv(t)
+	env.engine.stopWait = 5 * time.Second
+	slow := &slowNotifier{}
+	env.engine.notifier = slow
+	m := env.addMonitor(t, store.TypeHTTP, &scripted{results: []check.Result{{Error: "HTTP 503"}}})
+	events, stop := env.engine.Hub().Subscribe(64)
+	defer stop()
+	if err := env.engine.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, events, 5*time.Second, func(ev Event) bool { return ev.MonitorID == m.ID && ev.Alert == AlertDown })
+
+	env.engine.Stop()
+	if got := slow.alerts(); !slices.Contains(got, AlertDown) {
+		t.Fatalf("alerts when Stop returned = %v, want the DOWN alert", got)
+	}
 }
 
 // TestStopWaitsForRunningChecks stops the engine while a check runs. Stop

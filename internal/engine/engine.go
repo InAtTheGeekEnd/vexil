@@ -72,8 +72,9 @@ type Engine struct {
 	stopCh   chan struct{}
 	done     chan struct{}
 
-	reloadMu sync.Mutex // one Reload at a time
-	writeMu  sync.Mutex // the writer and DeleteMonitor take turns
+	reloadMu sync.Mutex     // one Reload at a time
+	writeMu  sync.Mutex     // the writer and DeleteMonitor take turns
+	notifyWG sync.WaitGroup // notifier calls in progress
 
 	mu      sync.Mutex
 	baseCtx context.Context
@@ -196,6 +197,21 @@ wait:
 	e.cancel()
 	close(e.stopCh)
 	<-e.done
+	// The writer has flushed, so no alert is handed over after this. Wait for
+	// the notifier calls in progress, so the alerts of the last results start
+	// their delivery before the database closes.
+	notified := make(chan struct{})
+	go func() {
+		e.notifyWG.Wait()
+		close(notified)
+	}()
+	late := time.NewTimer(e.stopWait)
+	defer late.Stop()
+	select {
+	case <-notified:
+	case <-late.C:
+		e.log.Warn("engine stop: alerts still being handed over after timeout")
+	}
 	e.log.Info("engine stopped")
 }
 
@@ -621,7 +637,7 @@ func (e *Engine) handle(r result) {
 	}
 	if alert != AlertNone {
 		e.log.Info("state change", "monitor", r.monitorID, "from", prev, "to", ev.State, "error", r.res.Error)
-		go e.notifier.Notify(context.Background(), ev)
+		e.notify(ev)
 	}
 	if certWarn {
 		// Record it first so a restart does not send the warning again.
@@ -631,9 +647,19 @@ func (e *Engine) handle(r result) {
 		e.log.Info("certificate expires soon", "monitor", r.monitorID, "expiry", r.res.CertExpiry)
 		cert := ev
 		cert.Alert = AlertCert
-		go e.notifier.Notify(context.Background(), cert)
+		e.notify(cert)
 	}
 	e.hub.Publish(ev)
+}
+
+// notify hands an alert to the notifier in its own goroutine, so a slow
+// channel does not hold the writer. Stop waits for these calls.
+func (e *Engine) notify(ev Event) {
+	e.notifyWG.Add(1)
+	go func() {
+		defer e.notifyWG.Done()
+		e.notifier.Notify(context.Background(), ev)
+	}()
 }
 
 // hasOpenIncident reports whether a monitor has an open incident. A read

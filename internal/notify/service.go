@@ -93,6 +93,26 @@ func (s *Service) Notify(ctx context.Context, ev engine.Event) {
 // Wait blocks until every delivery in progress has ended. Tests use it.
 func (s *Service) Wait() { s.wg.Wait() }
 
+// WaitFor waits until every delivery in progress has ended, or for d, and
+// reports whether all ended. main calls it at shutdown, so the alerts of the
+// last results go out while the database is still open. A delivery that
+// waits for a retry longer than d is lost (SPEC.md section 7.4).
+func (s *Service) WaitFor(d time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
+}
+
 // brandName returns the product name from the settings, or the default
 // from Options when none is saved.
 func (s *Service) brandName(ctx context.Context) string {

@@ -103,6 +103,13 @@ func serve(cfg config.Config, log *slog.Logger) error {
 	defer st.Close()
 
 	notifier := notify.NewService(st, notify.Options{Log: log, Brand: brand.Default.Name, BaseURL: cfg.BaseURL})
+	// Deferred before eng.Stop, so it runs after it and before st.Close: the
+	// alerts of the last results go out while the database is open.
+	defer func() {
+		if !notifier.WaitFor(5 * time.Second) {
+			log.Warn("alert deliveries still running at shutdown were dropped")
+		}
+	}()
 	eng := engine.New(st, engine.Options{Log: log, Notifier: notifier})
 	if err := eng.Start(ctx); err != nil {
 		return err
