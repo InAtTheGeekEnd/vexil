@@ -379,7 +379,8 @@ func TestInitialStatusFromDatabase(t *testing.T) {
 	}{
 		{"no checks", nil, false, false, Pending, 0},
 		{"last ok", []bool{false, true}, false, false, Up, 0},
-		{"one failure", []bool{true, false}, false, false, Up, 1},
+		{"one failure after a success", []bool{true, false}, false, false, Up, 1},
+		{"one failure, never a success", []bool{false}, false, false, Pending, 1},
 		{"two failures", []bool{false, false}, false, false, Down, 2},
 		{"open incident", []bool{true, false}, true, false, Down, 2},
 		{"paused", []bool{false, false}, false, true, Paused, 0},

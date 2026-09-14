@@ -313,9 +313,12 @@ func (e *Engine) initialStatus(ctx context.Context, m store.Monitor) (*Status, e
 		return nil, err
 	} else if st.Fails >= failuresBeforeDown {
 		st.State = Down
-	} else {
+	} else if len(recent) > st.Fails {
+		// A success comes before the failures, so the monitor was UP.
 		st.State = Up
 	}
+	// Otherwise the only checks are failures: no check ever succeeded, so
+	// the state stays PENDING.
 	return st, nil
 }
 
