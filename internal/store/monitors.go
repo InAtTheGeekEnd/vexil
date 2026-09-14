@@ -146,6 +146,7 @@ func (s *Store) DeleteMonitor(ctx context.Context, id int64) error {
 	defer tx.Rollback()
 	for _, q := range []string{
 		`DELETE FROM checks WHERE monitor_id = ?`,
+		`DELETE FROM hourly WHERE monitor_id = ?`,
 		`DELETE FROM daily WHERE monitor_id = ?`,
 		`DELETE FROM incidents WHERE monitor_id = ?`,
 	} {

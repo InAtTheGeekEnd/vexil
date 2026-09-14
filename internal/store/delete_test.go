@@ -7,12 +7,12 @@ import (
 	"time"
 )
 
-// countRows returns the rows of a monitor in the checks, daily and
+// countRows returns the rows of a monitor in the checks, hourly, daily and
 // incidents tables.
 func countRows(t *testing.T, s *Store, id int64) map[string]int {
 	t.Helper()
 	out := map[string]int{}
-	for _, table := range []string{"checks", "daily", "incidents"} {
+	for _, table := range []string{"checks", "hourly", "daily", "incidents"} {
 		var n int
 		if err := s.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM `+table+` WHERE monitor_id = ?`, id).Scan(&n); err != nil {
 			t.Fatal(err)
@@ -22,8 +22,8 @@ func countRows(t *testing.T, s *Store, id int64) map[string]int {
 	return out
 }
 
-// monitorWithHistory creates a monitor with one check, one daily row and
-// one incident.
+// monitorWithHistory creates a monitor with one check, one hourly row, one
+// daily row and one incident.
 func monitorWithHistory(t *testing.T, s *Store, name string) int64 {
 	t.Helper()
 	ctx := context.Background()
@@ -39,6 +39,10 @@ func monitorWithHistory(t *testing.T, s *Store, name string) int64 {
 		t.Fatal(err)
 	}
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO daily (monitor_id, day, total, ok) VALUES (?, '2026-09-01', 10, 9)`, m.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO hourly (monitor_id, hour, total, ok, avg_latency) VALUES (?, ?, 60, 59, 80)`,
+		m.ID, now.Truncate(time.Hour).Add(-time.Hour).Unix()); err != nil {
 		t.Fatal(err)
 	}
 	return m.ID
@@ -66,8 +70,8 @@ func TestMonitorIDsAreNotReused(t *testing.T) {
 }
 
 // TestDeleteCascades deletes a monitor with plain SQL, not DeleteMonitor.
-// The foreign keys must remove its checks, daily rows and incidents, and a
-// check for a monitor that does not exist must be refused.
+// The foreign keys must remove its checks, hourly rows, daily rows and
+// incidents, and a check for a monitor that does not exist must be refused.
 func TestDeleteCascades(t *testing.T) {
 	ctx := context.Background()
 	s := openTest(t)
@@ -89,9 +93,9 @@ func TestDeleteCascades(t *testing.T) {
 	}
 }
 
-// TestDeleteMonitorRemovesHistory deletes a monitor that has checks, a
-// daily row and an incident. None of its rows may be left, and another
-// monitor keeps all of its rows.
+// TestDeleteMonitorRemovesHistory deletes a monitor that has checks, an
+// hourly row, a daily row and an incident. None of its rows may be left, and
+// another monitor keeps all of its rows.
 func TestDeleteMonitorRemovesHistory(t *testing.T) {
 	ctx := context.Background()
 	s := openTest(t)
