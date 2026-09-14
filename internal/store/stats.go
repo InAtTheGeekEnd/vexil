@@ -284,6 +284,40 @@ func (s *Store) LatencySeries(ctx context.Context, monitorID int64, since time.T
 	if err != nil {
 		return nil, err
 	}
+	return latencyPoints(rows)
+}
+
+// hourlyLatencyQuery reads the average latency of the successful checks of
+// monitor ?1 from hour ?2 on, in buckets of ?3 seconds. Like
+// recentHoursQuery, it reads the hourly rows, and the hours after the newest
+// row from the checks. Each hour counts by its successful checks.
+const hourlyLatencyQuery = `
+	WITH rolled(until) AS (
+		SELECT COALESCE(MAX(hour) + 3600, ?2) FROM hourly WHERE monitor_id = ?1 AND hour >= ?2),
+	hours(hour, ok, latency) AS (
+		SELECT hour, ok, avg_latency FROM hourly WHERE monitor_id = ?1 AND hour >= ?2
+		UNION ALL
+		SELECT at / 3600 * 3600, SUM(ok), AVG(CASE WHEN ok = 1 THEN latency_ms END) FROM checks
+		WHERE monitor_id = ?1 AND at >= (SELECT until FROM rolled)
+		GROUP BY 1)
+	SELECT hour / ?3 * ?3, SUM(latency * ok) * 1.0 / SUM(ok) FROM hours
+	WHERE latency IS NOT NULL
+	GROUP BY 1 ORDER BY 1`
+
+// HourlyLatencySeries is LatencySeries for buckets of an hour or more, read
+// from the hourly rows. The hours after the newest hourly row come from the
+// checks.
+func (s *Store) HourlyLatencySeries(ctx context.Context, monitorID int64, since time.Time, bucket time.Duration) ([]LatencyPoint, error) {
+	secs := max(int64(bucket/time.Second), 3600)
+	rows, err := s.db.QueryContext(ctx, hourlyLatencyQuery, monitorID, since.Truncate(time.Hour).Unix(), secs)
+	if err != nil {
+		return nil, err
+	}
+	return latencyPoints(rows)
+}
+
+// latencyPoints reads rows of a bucket start and an average latency.
+func latencyPoints(rows *sql.Rows) ([]LatencyPoint, error) {
 	defer rows.Close()
 	var out []LatencyPoint
 	for rows.Next() {
