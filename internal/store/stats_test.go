@@ -70,6 +70,65 @@ func TestDailyStatsAndLatencySeries(t *testing.T) {
 	}
 }
 
+// TestDailyStatsSources reads 46 days after the job ran yesterday and
+// Retain ran today. A day comes from its daily row: the expired day that
+// Retain rolled up, and the cutoff day, whose checks Retain keeps. A day of
+// the last 30 days without a daily row, and today, come from the checks
+// through the hours. An older day without a daily row reads no checks: in
+// use, Retain rolls it up before its checks can be read.
+func TestDailyStatsSources(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	m := &Monitor{Name: "m", Type: TypeHTTP, Target: "https://x", IntervalS: 60}
+	if err := s.CreateMonitor(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	today := now.Truncate(24 * time.Hour)
+	day := func(d int) time.Time { return today.AddDate(0, 0, d).Add(time.Hour) }
+
+	seedChecks(t, s, m.ID, day(-45), 10, true)
+	seedChecks(t, s, m.ID, day(-30), 10, true)
+	seedChecks(t, s, m.ID, day(-30).Add(10*time.Minute), 10, false)
+	if err := s.Rollup(ctx, now.AddDate(0, 0, -1)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Retain(ctx, now, retentionBatch); err != nil {
+		t.Fatal(err)
+	}
+	if n := countChecks(t, s, m.ID); n != 20 {
+		t.Fatalf("checks after Retain = %d, want the 20 of the cutoff day", n)
+	}
+	seedChecks(t, s, m.ID, day(-40), 10, true)
+	seedChecks(t, s, m.ID, day(-29), 10, true)
+	seedChecks(t, s, m.ID, now.Add(-2*time.Hour), 6, true)
+
+	stats, err := s.DailyStats(ctx, m.ID, today.AddDate(0, 0, -45), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stats) != 46 {
+		t.Fatalf("got %d days, want 46", len(stats))
+	}
+	tests := []struct {
+		name      string
+		day       int // days before today
+		total, ok int
+	}{
+		{"expired day from the daily row of Retain", -45, 10, 10},
+		{"older day without a daily row reads no checks", -40, 0, 0},
+		{"cutoff day from its daily row", -30, 20, 10},
+		{"day of the last 30 days without a daily row", -29, 10, 10},
+		{"today", 0, 6, 6},
+	}
+	for _, tc := range tests {
+		d := stats[45+tc.day]
+		if d.Total != tc.total || d.OK != tc.ok {
+			t.Errorf("%s: %s = %d checks, %d ok; want %d, %d", tc.name, d.Day, d.Total, d.OK, tc.total, tc.ok)
+		}
+	}
+}
+
 func TestSummary(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()

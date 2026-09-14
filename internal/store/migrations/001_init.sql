@@ -39,6 +39,18 @@ CREATE TABLE daily (
   FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
 );
 
+-- One row per monitor and finished hour. The hourly job writes it, builds
+-- daily from it and deletes it after 30 days, with the checks.
+CREATE TABLE hourly (
+  monitor_id  INTEGER NOT NULL,
+  hour        INTEGER NOT NULL,
+  total       INTEGER NOT NULL,
+  ok          INTEGER NOT NULL,
+  avg_latency INTEGER,
+  PRIMARY KEY (monitor_id, hour),
+  FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
+);
+
 CREATE TABLE incidents (
   id          INTEGER PRIMARY KEY,
   monitor_id  INTEGER NOT NULL,

@@ -1,14 +1,38 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/InAtTheGeekEnd/vexil/internal/brand"
+	"github.com/InAtTheGeekEnd/vexil/internal/store"
 )
+
+// TestRetentionDocs reads SPEC 4.4. The job keeps checks and hourly rows for
+// store.RawRetention and daily rows forever, so the table must say so.
+func TestRetentionDocs(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "SPEC.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, section, _ := strings.Cut(string(b), "### 4.4 Fixed behavior")
+	section, _, _ = strings.Cut(section, "\n## ")
+	days := int(store.RawRetention / (24 * time.Hour))
+	for _, want := range []string{
+		fmt.Sprintf("| Raw check retention | %d days |", days),
+		fmt.Sprintf("| Hourly summary retention | %d days |", days),
+		"| Daily summary retention | Forever |",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("SPEC 4.4 does not have the row %q", want)
+		}
+	}
+}
 
 // TestLoginLimitDocs reads SPEC 13. The login limit counts an IPv6 client
 // per /64, so the SPEC must say so.

@@ -40,7 +40,9 @@ func TestRollupDayBeforeDelete(t *testing.T) {
 	day := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	seedChecks(t, s, m.ID, day.Add(time.Hour), 90, true)
 	seedChecks(t, s, m.ID, day.Add(2*time.Hour), 10, false)
-	now := day.AddDate(0, 0, 40)
+	// Within 30 days, so DailyStats reads a day without a daily row from its
+	// checks.
+	now := day.AddDate(0, 0, 10)
 
 	before, err := s.DailyStats(ctx, m.ID, day, now)
 	if err != nil {
@@ -139,8 +141,8 @@ func TestRetainDeletesInBatches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stats[0].Total != 1440 || stats[1].Total != 1440 || stats[15].Total != 60 {
-		t.Fatalf("stats = %+v %+v %+v", stats[0], stats[1], stats[15])
+	if stats[0].Total != 1440 || stats[1].Total != 1440 {
+		t.Fatalf("stats = %+v %+v", stats[0], stats[1])
 	}
 
 	// A cancelled context stops between batches without an error in the
@@ -154,6 +156,61 @@ func TestRetainDeletesInBatches(t *testing.T) {
 	n, err := s.Retain(ctx, now, 100)
 	if err != nil || n != 300 {
 		t.Fatalf("Retain after cancel = %d, %v", n, err)
+	}
+}
+
+// TestRetainDeletesHourly runs the job and then Retain. The hourly rows
+// before the cutoff go with the checks, also a row of a monitor that has no
+// checks left, as after a run that stopped between the two deletes. The
+// hours of the cutoff day and recent hours stay, and the expired day keeps
+// its daily row.
+func TestRetainDeletesHourly(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	a := &Monitor{Name: "A", Type: TypeHTTP, Target: "https://a.example", IntervalS: 60}
+	b := &Monitor{Name: "B", Type: TypeHTTP, Target: "https://b.example", IntervalS: 60}
+	for _, m := range []*Monitor{a, b} {
+		if err := s.CreateMonitor(ctx, m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	expired := now.AddDate(0, 0, -45).Truncate(24 * time.Hour)
+	cutoffDay := now.AddDate(0, 0, -30).Truncate(24 * time.Hour)
+	seedChecks(t, s, a.ID, expired.Add(time.Hour), 60, true)
+	seedChecks(t, s, a.ID, cutoffDay.Add(13*time.Hour), 60, true)
+	seedChecks(t, s, a.ID, now.Add(-2*time.Hour), 60, true)
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO hourly (monitor_id, hour, total, ok) VALUES (?, ?, 60, 60)`,
+		b.ID, expired.Add(5*time.Hour).Unix()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Rollup(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Retain(ctx, now, retentionBatch); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name  string
+		id    int64
+		hour  time.Time
+		found bool
+	}{
+		{"expired hour", a.ID, expired.Add(time.Hour), false},
+		{"expired row without checks", b.ID, expired.Add(5 * time.Hour), false},
+		{"hour on the cutoff day", a.ID, cutoffDay.Add(13 * time.Hour), true},
+		{"recent hour", a.ID, now.Add(-2 * time.Hour), true},
+	}
+	for _, tc := range tests {
+		if _, found := readHour(t, s, tc.id, tc.hour); found != tc.found {
+			t.Errorf("%s: hourly row found %v, want %v", tc.name, found, tc.found)
+		}
+	}
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT total FROM daily WHERE monitor_id = ? AND day = ?`,
+		a.ID, expired.Format("2006-01-02")).Scan(&total); err != nil || total != 60 {
+		t.Fatalf("daily row of the expired day: total %d, %v; want 60", total, err)
 	}
 }
 

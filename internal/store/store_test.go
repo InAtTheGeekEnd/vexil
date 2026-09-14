@@ -35,7 +35,7 @@ func TestOpenIsIdempotent(t *testing.T) {
 func TestMigrationsCreateTables(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
-	tables := []string{"monitors", "monitor_groups", "checks", "daily", "incidents", "channels", "sessions", "settings", "schema_migrations"}
+	tables := []string{"monitors", "monitor_groups", "checks", "hourly", "daily", "incidents", "channels", "sessions", "settings", "schema_migrations"}
 	for _, tbl := range tables {
 		t.Run(tbl, func(t *testing.T) {
 			var n int

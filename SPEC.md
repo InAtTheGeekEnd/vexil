@@ -118,6 +118,7 @@ Only a person with access to the server can reset the password. This is the secu
 | Keyword search limit | First 1 MB of the body |
 | TLS certificate warning | 14 days before expiry, one alert |
 | Raw check retention | 30 days |
+| Hourly summary retention | 30 days |
 | Daily summary retention | Forever |
 | Concurrent checks | 50 at the same time |
 
@@ -334,6 +335,16 @@ CREATE TABLE daily (
   FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
 );
 
+CREATE TABLE hourly (
+  monitor_id  INTEGER NOT NULL,
+  hour        INTEGER NOT NULL,       -- unix seconds, on the hour, UTC
+  total       INTEGER NOT NULL,
+  ok          INTEGER NOT NULL,
+  avg_latency INTEGER,
+  PRIMARY KEY (monitor_id, hour),
+  FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
+);
+
 CREATE TABLE incidents (
   id          INTEGER PRIMARY KEY,
   monitor_id  INTEGER NOT NULL,
@@ -366,9 +377,10 @@ CREATE TABLE settings (
 ```
 
 - Use WAL mode.
-- Open every connection with `PRAGMA foreign_keys = ON`, so a deleted monitor takes its checks, daily rows and incidents with it.
+- Open every connection with `PRAGMA foreign_keys = ON`, so a deleted monitor takes its checks, hourly rows, daily rows and incidents with it.
 - Migrations: numbered `.sql` files in `internal/store/migrations`, embedded, run at startup.
-- A background job runs every hour. It updates `daily` and deletes `checks` rows older than 30 days.
+- A background job runs 30 seconds after every full hour. It writes the `hourly` rows of the hours that have finished and fills any missing hour of the last 30 days. It builds `daily` from `hourly`, not from `checks`. It deletes `checks` and `hourly` rows older than 30 days.
+- The 24-hour sparkline and the 7-day and 30-day response charts read `hourly`. An hour without a row yet, as the current hour, comes from `checks`.
 - Backup: the user runs `vexil backup <path>` and copies that file. Copying the live data folder can corrupt the copy, because the database runs in WAL mode.
 
 ---
@@ -586,7 +598,7 @@ Settings page, section **Brand**:
 | Binary size | Less than 25 MB |
 | Memory with 100 monitors | Less than 50 MB |
 | Dashboard server response | Less than 50 ms |
-| | Measured: 51 ms with 100 monitors and 30 days of history, default SQLite cache. |
+| | Measured: 12 ms at a 60-second interval and 15 ms at a 30-second interval, with 100 monitors and 30 days of history, default SQLite cache. |
 | Page weight (dashboard, first load) | Less than 200 KB, fonts included |
 | Lighthouse accessibility | 100 |
 

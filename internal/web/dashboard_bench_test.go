@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -16,24 +17,22 @@ import (
 	"github.com/InAtTheGeekEnd/vexil/internal/store"
 )
 
-// BenchmarkDashboard measures the server response of the dashboard with 100
-// monitors and 30 days of checks at the default 60-second interval: 4.32
-// million check rows. SPEC.md section 14 sets the target at less than 50 ms.
-// Almost all of the time is the 24-hour sparkline query, which reads 144,000
-// rows.
-// The setup takes a while, so run the benchmark on its own:
-//
-//	go test -run '^$' -bench BenchmarkDashboard -benchtime 20x ./internal/web
-func BenchmarkDashboard(b *testing.B) {
+// benchServer builds a server whose store holds 100 monitors with 30 days of
+// checks at the given interval in seconds, and the hourly and daily rows
+// that the job writes. It returns the monitor ids and a function that serves
+// one logged-in GET request. The engine is not started, so no check runs
+// during the benchmark.
+func benchServer(b *testing.B, interval int) ([]int64, func(path string)) {
+	b.Helper()
 	ctx := context.Background()
 	dir := b.TempDir()
 	st, err := store.Open(ctx, dir)
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer st.Close()
+	b.Cleanup(func() { st.Close() })
 
-	const monitors, interval, days = 100, 60, 30
+	const monitors, days = 100, 30
 	var ids []int64
 	for i := 1; i <= monitors; i++ {
 		m := &store.Monitor{Name: "Service " + strconv.Itoa(i), Type: store.TypeHTTP, Target: "https://service" + strconv.Itoa(i) + ".example.com", IntervalS: interval}
@@ -67,13 +66,12 @@ func BenchmarkDashboard(b *testing.B) {
 	if err := db.Close(); err != nil {
 		b.Fatal(err)
 	}
-	// The hourly job writes the daily rows of the days before today.
-	if err := st.RollupDays(ctx, time.Now()); err != nil {
+	// The hourly job writes the hourly and daily rows.
+	if err := st.Rollup(ctx, time.Now()); err != nil {
 		b.Fatal(err)
 	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	// The engine is not started, so no check runs during the benchmark.
 	s, err := New(st, Options{Log: log, Engine: engine.New(st, engine.Options{Log: log})})
 	if err != nil {
 		b.Fatal(err)
@@ -92,19 +90,34 @@ func BenchmarkDashboard(b *testing.B) {
 	if err := st.CreateSession(ctx, tokenHash, time.Now(), time.Now().Add(time.Hour)); err != nil {
 		b.Fatal(err)
 	}
-	serve := func() {
-		req := httptest.NewRequest(http.MethodGet, "/", nil)
+	return ids, func(path string) {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
 		req.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
 		rec := httptest.NewRecorder()
 		s.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
-			b.Fatalf("GET / = %d", rec.Code)
+			b.Fatalf("GET %s = %d", path, rec.Code)
 		}
 	}
-	serve() // warm the SQLite page cache before the timer starts
+}
 
-	for b.Loop() {
-		serve()
+// BenchmarkDashboard measures the server response of the dashboard with 100
+// monitors and 30 days of checks, at the default 60-second interval (4.32
+// million check rows) and at 30 seconds (8.64 million). SPEC.md section 14
+// sets the target at less than 50 ms. The sparkline and today's cell read
+// the hourly rows and the checks of the current hour.
+// The setup takes a while, so run the benchmark on its own:
+//
+//	go test -run '^$' -bench BenchmarkDashboard -benchtime 20x ./internal/web
+func BenchmarkDashboard(b *testing.B) {
+	for _, interval := range []int{60, 30} {
+		b.Run(fmt.Sprintf("interval=%ds", interval), func(b *testing.B) {
+			_, serve := benchServer(b, interval)
+			serve("/") // warm the SQLite page cache before the timer starts
+			for b.Loop() {
+				serve("/")
+			}
+			b.ReportMetric(float64(b.Elapsed())/float64(b.N)/float64(time.Millisecond), "ms/op")
+		})
 	}
-	b.ReportMetric(float64(b.Elapsed())/float64(b.N)/float64(time.Millisecond), "ms/op")
 }

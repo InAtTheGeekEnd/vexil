@@ -91,7 +91,9 @@ func (s *Server) handleMonitor(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
-	day, err := s.store.Summary(ctx, m.ID, now.Add(-24*time.Hour))
+	// The 24-hour tiles read 23 finished hours and the current hour, as the
+	// dashboard sparkline does.
+	day, err := s.store.Summary(ctx, m.ID, now.UTC().Truncate(time.Hour).Add(-23*time.Hour))
 	if err != nil {
 		s.serverError(w, err)
 		return
@@ -131,7 +133,13 @@ func (s *Server) handleMonitor(w http.ResponseWriter, r *http.Request) {
 func (s *Server) charts(r *http.Request, id int64, now time.Time) ([]chartRange, error) {
 	out := make([]chartRange, 0, len(chartRanges))
 	for _, cr := range chartRanges {
-		series, err := s.store.LatencySeries(r.Context(), id, now.Add(-cr.Window), cr.Bucket)
+		// The 7-day and 30-day charts, with buckets of an hour or more, read
+		// the hourly rows. The 24-hour chart reads the checks.
+		read := s.store.LatencySeries
+		if cr.Bucket >= time.Hour {
+			read = s.store.HourlyLatencySeries
+		}
+		series, err := read(r.Context(), id, now.Add(-cr.Window), cr.Bucket)
 		if err != nil {
 			return nil, err
 		}
