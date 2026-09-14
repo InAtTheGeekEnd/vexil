@@ -3,7 +3,7 @@
 vexil is a simple, self-hosted uptime monitor. One binary, one data folder, no external database.
 
 - Monitors HTTP, TCP, ping, DNS and push targets.
-- Sends alerts to email, Slack, Discord, Telegram, ntfy and webhooks.
+- Sends alerts to email, Slack, Discord, Telegram, ntfy, Pushover and webhooks.
 - Serves a public status page and status badges.
 - Runs as one static Go binary with SQLite inside the data folder.
 

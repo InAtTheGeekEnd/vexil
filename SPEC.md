@@ -221,7 +221,7 @@ Error strings must be short and readable by non-experts. They appear in alerts a
 
 ### 7.1 Channels
 
-Six channel types. All enabled channels get all alerts.
+Seven channel types. All enabled channels get all alerts.
 
 | Channel | Fields |
 |---|---|
@@ -230,6 +230,7 @@ Six channel types. All enabled channels get all alerts.
 | Discord | Webhook URL |
 | Telegram | Bot token, chat ID |
 | ntfy | Topic URL, optional access token |
+| Pushover | User key, application token, optional "Repeat until acknowledged" switch with a retry interval (1 to 60 minutes, default 1) and an expiry time (1 to 180 minutes, default 60) |
 | Webhook | URL. vexil POSTs JSON. |
 
 Each channel has a **Send test** button and an on/off switch.
@@ -257,6 +258,8 @@ Certificate warning:
 ```
 
 Slack and Discord use their rich formats (color bar in the status color). Email uses a simple branded HTML template plus a plain-text part.
+
+Pushover sends every message with normal priority (0). When "Repeat until acknowledged" is on, DOWN alerts use emergency priority (2): Pushover repeats the alert at the retry interval until the user acknowledges it or the expiry time ends. UP alerts, certificate warnings and test messages always use normal priority, never emergency.
 
 ### 7.3 Webhook payload
 
