@@ -195,7 +195,7 @@ vexil sends each alert once. There are no repeat reminders.
 - Checkers send results into one channel. One writer goroutine writes to SQLite. This avoids lock contention.
 - The writer publishes each result to an in-memory event hub. The SSE handler reads from the hub.
 - Changes to a monitor (edit, pause, delete) restart only that monitor's goroutine.
-- Shutdown: on SIGINT or SIGTERM, stop tickers, wait for running checks (maximum 10 seconds), flush the writer, close the database.
+- Shutdown: on SIGINT or SIGTERM, finish within 10 seconds. One budget of 8 seconds covers the stages in order: stop tickers and wait for running checks, flush the writer, wait for the alert calls, then wait for the deliveries in progress. Each stage gets what is left of the budget. Then close the database.
 
 ### 6.4 Checker interface
 

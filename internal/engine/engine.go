@@ -13,9 +13,12 @@ import (
 	"github.com/InAtTheGeekEnd/vexil/internal/store"
 )
 
+// ShutdownBudget is the most that a whole shutdown may take, so it ends
+// before Docker stops waiting after 10 seconds (SPEC.md section 6.3).
+const ShutdownBudget = 8 * time.Second
+
 const (
 	maxConcurrent  = 50
-	shutdownWait   = 10 * time.Second
 	certWarnBefore = 14 * 24 * time.Hour
 
 	// Timing from SPEC.md sections 4.4, 5.5 and 6.3. Tests shorten these
@@ -28,6 +31,12 @@ const (
 // Notifier receives alerts: DOWN, UP and certificate warnings.
 type Notifier interface {
 	Notify(ctx context.Context, ev Event)
+}
+
+// deliveryWaiter is a Notifier that can wait for its deliveries in progress.
+// Stop gives it what is left of the shutdown budget.
+type deliveryWaiter interface {
+	WaitUntil(deadline time.Time) bool
 }
 
 type noopNotifier struct{}
@@ -64,7 +73,7 @@ type Engine struct {
 	retryDelay   time.Duration
 	maxOffset    time.Duration
 	pushMinExtra time.Duration
-	stopWait     time.Duration // how long Stop waits for running checks
+	stopWait     time.Duration // the budget of Stop
 
 	sem      chan struct{}
 	results  chan result
@@ -99,7 +108,7 @@ func New(st *store.Store, opts Options) *Engine {
 		retryDelay:   defaultRetryDelay,
 		maxOffset:    defaultMaxOffset,
 		pushMinExtra: defaultPushMinExtra,
-		stopWait:     shutdownWait,
+		stopWait:     ShutdownBudget,
 		sem:          make(chan struct{}, maxConcurrent),
 		results:      make(chan result, 256),
 		stopping:     make(chan struct{}),
@@ -161,9 +170,18 @@ func (e *Engine) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop cancels the tickers, waits for running checks (at most 10 seconds)
-// and flushes the writer.
+// Stop stops the engine within its budget, ShutdownBudget unless a test sets
+// another. See StopBy.
 func (e *Engine) Stop() {
+	e.StopBy(time.Now().Add(e.stopWait))
+}
+
+// StopBy stops the engine by the deadline (SPEC.md section 6.3). The stages
+// share the deadline and run in order, each with what is left of it: stop the
+// tickers and wait for the running checks, flush the writer, wait for the
+// alert calls, then wait for the deliveries in progress when the notifier can
+// wait for them.
+func (e *Engine) StopBy(deadline time.Time) {
 	e.mu.Lock()
 	if !e.started || e.stopped {
 		e.mu.Unlock()
@@ -180,10 +198,11 @@ func (e *Engine) Stop() {
 	}
 	e.mu.Unlock()
 
-	// One deadline for all runners: once it passes, Stop waits for none of
-	// them. A timer channel delivers once, so a select on it per runner would
-	// wait without a limit for every runner after the first late one.
-	timeout := time.NewTimer(e.stopWait)
+	// Running checks. One timer for all runners: once it fires, Stop waits for
+	// none of them. A timer channel delivers once, so a select on it per
+	// runner would wait without a limit for every runner after the first late
+	// one.
+	timeout := time.NewTimer(time.Until(deadline))
 	defer timeout.Stop()
 wait:
 	for _, r := range runners {
@@ -197,22 +216,34 @@ wait:
 	e.cancel()
 	close(e.stopCh)
 	<-e.done
-	// The writer has flushed, so no alert is handed over after this. Wait for
-	// the notifier calls in progress, so the alerts of the last results start
-	// their delivery before the database closes.
-	notified := make(chan struct{})
-	go func() {
-		e.notifyWG.Wait()
-		close(notified)
-	}()
-	late := time.NewTimer(e.stopWait)
-	defer late.Stop()
-	select {
-	case <-notified:
-	case <-late.C:
-		e.log.Warn("engine stop: alerts still being handed over after timeout")
+	// Alert calls. The writer has flushed, so no alert is handed over after
+	// this.
+	if !waitUntil(&e.notifyWG, deadline) {
+		e.log.Warn("engine stop: alerts still being handed over at the end of the shutdown budget")
+	}
+	// Deliveries in progress, so the alerts of the last results go out while
+	// the database is still open.
+	if d, ok := e.notifier.(deliveryWaiter); ok && !d.WaitUntil(deadline) {
+		e.log.Warn("engine stop: alert deliveries still running at the end of the shutdown budget were dropped")
 	}
 	e.log.Info("engine stopped")
+}
+
+// waitUntil waits for wg until the deadline and reports whether wg ended.
+func waitUntil(wg *sync.WaitGroup, deadline time.Time) bool {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	timer := time.NewTimer(time.Until(deadline))
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
 }
 
 // Reload restarts the goroutine of one monitor after an edit, pause,

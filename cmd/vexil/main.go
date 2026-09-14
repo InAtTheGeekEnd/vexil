@@ -108,13 +108,6 @@ func serve(cfg config.Config, log *slog.Logger) error {
 	defer st.Close()
 
 	notifier := notify.NewService(st, notify.Options{Log: log, Brand: brand.Default.Name, BaseURL: cfg.BaseURL})
-	// Deferred before eng.Stop, so it runs after it and before st.Close: the
-	// alerts of the last results go out while the database is open.
-	defer func() {
-		if !notifier.WaitFor(5 * time.Second) {
-			log.Warn("alert deliveries still running at shutdown were dropped")
-		}
-	}()
 	eng := engine.New(st, engine.Options{Log: log, Notifier: notifier})
 	if err := eng.Start(ctx); err != nil {
 		return err
@@ -167,9 +160,18 @@ func serve(cfg config.Config, log *slog.Logger) error {
 	}
 
 	log.Info("shutting down")
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// One budget for the whole shutdown, so it ends before Docker stops
+	// waiting after 10 seconds (SPEC.md section 6.3). Each stage gets what is
+	// left: the open requests, then the engine with its running checks, alert
+	// calls and deliveries.
+	deadline := time.Now().Add(engine.ShutdownBudget)
+	shutdownCtx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
-	return httpSrv.Shutdown(shutdownCtx)
+	shutdownErr := httpSrv.Shutdown(shutdownCtx)
+	stopJobs()
+	<-retentionDone
+	eng.StopBy(deadline)
+	return shutdownErr
 }
 
 func resetPassword(cfg config.Config) error {

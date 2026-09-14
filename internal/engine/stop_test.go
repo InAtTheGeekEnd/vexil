@@ -3,6 +3,8 @@ package engine
 import (
 	"context"
 	"slices"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,6 +23,71 @@ func (s *stuck) Check(context.Context) check.Result {
 	s.started <- struct{}{}
 	<-s.release
 	return check.Result{OK: true}
+}
+
+// hangingChannel is a notifier for a channel that does not answer: its alert
+// calls and its deliveries do not end until the test releases them.
+type hangingChannel struct {
+	release    chan struct{}
+	called     chan struct{}
+	deliveries sync.WaitGroup
+	deadline   atomic.Pointer[time.Time] // the deadline given to WaitUntil
+}
+
+func (h *hangingChannel) Notify(ctx context.Context, ev Event) {
+	h.deliveries.Add(1)
+	go func() {
+		defer h.deliveries.Done()
+		<-h.release
+	}()
+	select {
+	case h.called <- struct{}{}:
+	default:
+	}
+	<-h.release
+}
+
+func (h *hangingChannel) WaitUntil(deadline time.Time) bool {
+	h.deadline.Store(&deadline)
+	return waitUntil(&h.deliveries, deadline)
+}
+
+// TestStopBudget stops the engine while a check hangs and while an alert
+// call and its delivery hang. Stop must return inside its one budget for the
+// whole shutdown, and it must give the deliveries the same deadline, not a
+// timer of their own.
+func TestStopBudget(t *testing.T) {
+	env := newEnv(t)
+	const budget = time.Second
+	env.engine.stopWait = budget
+	ch := &hangingChannel{release: make(chan struct{}), called: make(chan struct{}, 1)}
+	env.engine.notifier = ch
+	c := &stuck{started: make(chan struct{}, 1), release: make(chan struct{})}
+	t.Cleanup(func() {
+		close(c.release)
+		close(ch.release)
+	})
+	env.addMonitor(t, store.TypeHTTP, c)
+	env.addMonitor(t, store.TypeHTTP, &scripted{results: []check.Result{{Error: "HTTP 503"}}})
+	if err := env.engine.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for what, ready := range map[string]chan struct{}{"the hanging check": c.started, "the hanging alert call": ch.called} {
+		select {
+		case <-ready:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s did not start", what)
+		}
+	}
+
+	start := time.Now()
+	env.engine.Stop()
+	if took := time.Since(start); took > budget+250*time.Millisecond {
+		t.Fatalf("Stop took %v, want at most the budget of %v", took, budget)
+	}
+	if d := ch.deadline.Load(); d == nil || d.After(start.Add(budget+50*time.Millisecond)) {
+		t.Fatalf("the deliveries got deadline %v, want the deadline of the budget, about %v", d, start.Add(budget))
+	}
 }
 
 // slowNotifier takes a moment before it records an alert, as a notifier that
