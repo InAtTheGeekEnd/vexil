@@ -31,9 +31,8 @@ func newTestService(t *testing.T) (*Service, *store.Store, *[]time.Duration) {
 	t.Cleanup(func() { st.Close() })
 	s := NewService(st, Options{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Brand: "Acme Watch", BaseURL: "https://status.example.com"})
 	slept := &[]time.Duration{}
-	s.sleep = func(ctx context.Context, d time.Duration) bool {
+	s.sleep = func(d time.Duration) {
 		*slept = append(*slept, d)
-		return true
 	}
 	return s, st, slept
 }
@@ -292,14 +291,13 @@ func TestDownRetryDroppedAfterRecovery(t *testing.T) {
 	// While the DOWN alert waits for its retry, the engine closes the
 	// incident and sends UP.
 	var sleeps atomic.Int32
-	s.sleep = func(ctx context.Context, d time.Duration) bool {
+	s.sleep = func(time.Duration) {
 		if sleeps.Add(1) == 1 {
 			if err := st.CloseIncident(ctx, mon.ID, upAt); err != nil {
 				t.Error(err)
 			}
 			s.Notify(ctx, engine.Event{MonitorID: mon.ID, Alert: engine.AlertUp, At: upAt})
 		}
-		return true
 	}
 
 	if _, err := st.OpenIncident(ctx, mon.ID, firstAt, "HTTP 503"); err != nil {
@@ -444,11 +442,10 @@ func TestChannelErrorFollowsTheChannel(t *testing.T) {
 
 	// The user fixes the URL while the alert waits for its first retry.
 	var fixed atomic.Bool
-	s.sleep = func(ctx context.Context, d time.Duration) bool {
+	s.sleep = func(time.Duration) {
 		if fixed.CompareAndSwap(false, true) {
 			setURL(ctx, good.URL)
 		}
-		return true
 	}
 	s.Notify(ctx, engine.Event{MonitorID: mon.ID, Alert: engine.AlertUp, At: testAt})
 	s.Wait()

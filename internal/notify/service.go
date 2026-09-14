@@ -40,13 +40,13 @@ type Service struct {
 	client  *http.Client
 	brand   string
 	baseURL string
-	sleep   func(context.Context, time.Duration) bool
+	sleep   func(time.Duration)
 	wg      sync.WaitGroup
 }
 
 // NewService builds a Service.
 func NewService(st *store.Store, opts Options) *Service {
-	s := &Service{store: st, log: opts.Log, client: opts.Client, brand: opts.Brand, baseURL: opts.BaseURL, sleep: sleep}
+	s := &Service{store: st, log: opts.Log, client: opts.Client, brand: opts.Brand, baseURL: opts.BaseURL, sleep: time.Sleep}
 	if s.log == nil {
 		s.log = slog.Default()
 	}
@@ -54,15 +54,6 @@ func NewService(st *store.Store, opts Options) *Service {
 		s.client = &http.Client{Timeout: sendTimeout}
 	}
 	return s
-}
-
-func sleep(ctx context.Context, d time.Duration) bool {
-	select {
-	case <-time.After(d):
-		return true
-	case <-ctx.Done():
-		return false
-	}
 }
 
 // Notify builds the message for an alert and delivers it to every enabled
@@ -217,8 +208,7 @@ func (s *Service) deliver(ctx context.Context, c store.Channel, m Message) {
 
 // withRetries calls send until it works, with the waits from SPEC.md
 // section 7.4. It returns the number of failed attempts and the last error
-// with secrets redacted, or nil on success. It returns ctx.Err() when ctx
-// ends during a wait.
+// with secrets redacted, or nil on success.
 func (s *Service) withRetries(ctx context.Context, c store.Channel, what string, send func(context.Context) error) (int, error) {
 	for attempt := 0; ; attempt++ {
 		actx, cancel := context.WithTimeout(ctx, sendTimeout)
@@ -235,9 +225,7 @@ func (s *Service) withRetries(ctx context.Context, c store.Channel, what string,
 			return attempt + 1, errors.New(last)
 		}
 		s.log.Warn(what+" failed, will retry", "channel", c.ID, "name", c.Name, "attempt", attempt+1, "err", last)
-		if !s.sleep(ctx, retryDelays[attempt]) {
-			return attempt + 1, ctx.Err()
-		}
+		s.sleep(retryDelays[attempt])
 	}
 }
 
