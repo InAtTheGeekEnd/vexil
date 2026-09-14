@@ -17,6 +17,9 @@ import (
 // retryDelays are the waits between attempts (SPEC.md section 7.4).
 var retryDelays = []time.Duration{5 * time.Second, 30 * time.Second, 2 * time.Minute}
 
+// errDropped ends the retries of an alert that is no longer true.
+var errDropped = errors.New("alert dropped")
+
 // sendTimeout limits one delivery attempt.
 const sendTimeout = 15 * time.Second
 
@@ -157,7 +160,23 @@ func (s *Service) deliver(ctx context.Context, c store.Channel, m Message) {
 			s.cancel(ctx, c, cn, m)
 		}()
 	}
-	failed, err := s.withRetries(ctx, c, "alert delivery", func(ctx context.Context) error { return sender.Send(ctx, m) })
+	attempts := 0
+	failed, err := s.withRetries(ctx, c, "alert delivery", func(ctx context.Context) error {
+		attempts++
+		// A DOWN alert that waits for a retry is dropped once its incident
+		// has closed: the UP alert can be out already, and a late DOWN alert
+		// would say the monitor is down while it is up. An attempt that is on
+		// its way when the incident closes still counts, and the cancel below
+		// stops its repeats.
+		if attempts > 1 && m.Kind == KindDown && s.recovered(ctx, m) {
+			return errDropped
+		}
+		return sender.Send(ctx, m)
+	})
+	if errors.Is(err, errDropped) {
+		s.log.Info("DOWN alert dropped: the monitor recovered before a retry", "channel", c.ID, "name", c.Name, "monitor", m.Monitor.ID)
+		return
+	}
 	if err != nil {
 		if ctx.Err() == nil {
 			s.fail(ctx, c, err.Error())
@@ -187,6 +206,9 @@ func (s *Service) withRetries(ctx context.Context, c store.Channel, what string,
 		cancel()
 		if err == nil {
 			return attempt, nil
+		}
+		if errors.Is(err, errDropped) {
+			return attempt, err
 		}
 		last := Redact(err.Error(), Secrets(c))
 		if attempt >= len(retryDelays) {

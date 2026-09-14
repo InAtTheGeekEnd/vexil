@@ -144,8 +144,9 @@ func TestPushoverDeliveryRetriesAndRedacts(t *testing.T) {
 type fakePushover struct {
 	mu           sync.Mutex
 	calls        []string
-	failCancel   bool // every cancel answers HTTP 500
-	failMessages int  // the next n messages answer HTTP 500
+	failCancel   bool   // every cancel answers HTTP 500
+	failMessages int    // the next n messages answer HTTP 500
+	onMessage    func() // runs once, before the answer to the next message
 }
 
 // Requests as fakePushover records them. {tag} stands for an incident tag.
@@ -161,6 +162,15 @@ func newFakePushover(t *testing.T) *fakePushover {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		json.NewDecoder(r.Body).Decode(&body)
+		if r.URL.Path == "/1/messages.json" {
+			f.mu.Lock()
+			hook := f.onMessage
+			f.onMessage = nil
+			f.mu.Unlock()
+			if hook != nil {
+				hook()
+			}
+		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		fail := f.failCancel
@@ -197,10 +207,72 @@ func (f *fakePushover) take() string {
 	return strings.Join(out, "\n")
 }
 
-// A DOWN, UP, DOWN sequence: the first DOWN alert is still in retry when
-// the second outage starts. Its late delivery must cancel with its own tag.
+// A DOWN, UP, DOWN sequence: the first DOWN alert is on its way to Pushover
+// when the first incident closes and the second outage starts. Its delivery
+// must cancel with its own tag (SPEC.md section 7.2).
 func TestPushoverLateCancelAfterNewOutage(t *testing.T) {
+	s, st, slept := newTestService(t)
+	api := newFakePushover(t)
+	ctx := context.Background()
+	mon := &store.Monitor{Name: "API", Type: store.TypeHTTP, Target: "https://api.example.com"}
+	if err := st.CreateMonitor(ctx, mon); err != nil {
+		t.Fatal(err)
+	}
+	ch := &store.Channel{Type: store.ChannelPushover, Name: "Phone", Enabled: true, Config: map[string]string{
+		"user": "uUSERKEY", "token": "aAPPTOKEN", "repeat": "1", "retry": "1", "expire": "60"}}
+	if err := st.CreateChannel(ctx, ch); err != nil {
+		t.Fatal(err)
+	}
+	firstAt, upAt, secondAt := testAt, testAt.Add(3*time.Minute), testAt.Add(5*time.Minute)
+
+	// While Pushover takes the first DOWN alert, the engine closes the first
+	// incident and sends UP, then opens a second incident and sends DOWN.
+	api.mu.Lock()
+	api.onMessage = func() {
+		if err := st.CloseIncident(ctx, mon.ID, upAt); err != nil {
+			t.Error(err)
+		}
+		s.Notify(ctx, engine.Event{MonitorID: mon.ID, Alert: engine.AlertUp, At: upAt})
+		if _, err := st.OpenIncident(ctx, mon.ID, secondAt, "HTTP 503"); err != nil {
+			t.Error(err)
+		}
+		s.Notify(ctx, engine.Event{MonitorID: mon.ID, Alert: engine.AlertDown, At: secondAt, Result: check.Result{Error: "HTTP 503"}})
+	}
+	api.mu.Unlock()
+
+	if _, err := st.OpenIncident(ctx, mon.ID, firstAt, "HTTP 503"); err != nil {
+		t.Fatal(err)
+	}
+	s.Notify(ctx, engine.Event{MonitorID: mon.ID, Alert: engine.AlertDown, At: firstAt, Result: check.Result{Error: "HTTP 503"}})
+	s.Wait()
+
+	first := strings.ReplaceAll(cancelReq, "{tag}", fmt.Sprintf("m%d-%d", mon.ID, firstAt.Unix()))
+	firstDown := strings.ReplaceAll(downReq, "{tag}", fmt.Sprintf("m%d-%d", mon.ID, firstAt.Unix()))
+	secondDown := strings.ReplaceAll(downReq, "{tag}", fmt.Sprintf("m%d-%d", mon.ID, secondAt.Unix()))
+	want := []string{
+		first,      // the UP alert cancels before Pushover has the first DOWN alert
+		first,      // the delivery of the first DOWN alert cancels it
+		plainReq,   // the UP alert
+		firstDown,  // the first DOWN alert
+		secondDown, // the second DOWN alert, not cancelled
+	}
+	sort.Strings(want)
+	if got := api.take(); got != strings.Join(want, "\n") {
+		t.Fatalf("requests:\n%s\nwant:\n%s", got, strings.Join(want, "\n"))
+	}
+	if len(*slept) != 0 {
+		t.Fatalf("sleeps = %v, want none", *slept)
+	}
+}
+
+// A DOWN alert whose first attempt fails waits for a retry. The incident
+// closes and the UP alert goes out during the wait. The retry must be
+// dropped, so no DOWN alert arrives after the UP alert, and the channel
+// keeps no error.
+func TestDownRetryDroppedAfterRecovery(t *testing.T) {
 	s, st, _ := newTestService(t)
+	var logs bytes.Buffer
+	s.log = slog.New(slog.NewTextHandler(&logs, nil))
 	api := newFakePushover(t)
 	api.mu.Lock()
 	api.failMessages = 1 // the first DOWN alert needs a retry
@@ -215,25 +287,18 @@ func TestPushoverLateCancelAfterNewOutage(t *testing.T) {
 	if err := st.CreateChannel(ctx, ch); err != nil {
 		t.Fatal(err)
 	}
-	firstAt, upAt, secondAt := testAt, testAt.Add(3*time.Minute), testAt.Add(5*time.Minute)
+	firstAt, upAt := testAt, testAt.Add(3*time.Minute)
 
-	// While the first DOWN alert waits for its retry, the engine closes the
-	// first incident and sends UP, then opens a second incident and sends
-	// DOWN.
-	var once sync.Once
+	// While the DOWN alert waits for its retry, the engine closes the
+	// incident and sends UP.
 	var sleeps atomic.Int32
 	s.sleep = func(ctx context.Context, d time.Duration) bool {
-		sleeps.Add(1)
-		once.Do(func() {
+		if sleeps.Add(1) == 1 {
 			if err := st.CloseIncident(ctx, mon.ID, upAt); err != nil {
 				t.Error(err)
 			}
 			s.Notify(ctx, engine.Event{MonitorID: mon.ID, Alert: engine.AlertUp, At: upAt})
-			if _, err := st.OpenIncident(ctx, mon.ID, secondAt, "HTTP 503"); err != nil {
-				t.Error(err)
-			}
-			s.Notify(ctx, engine.Event{MonitorID: mon.ID, Alert: engine.AlertDown, At: secondAt, Result: check.Result{Error: "HTTP 503"}})
-		})
+		}
 		return true
 	}
 
@@ -243,16 +308,10 @@ func TestPushoverLateCancelAfterNewOutage(t *testing.T) {
 	s.Notify(ctx, engine.Event{MonitorID: mon.ID, Alert: engine.AlertDown, At: firstAt, Result: check.Result{Error: "HTTP 503"}})
 	s.Wait()
 
-	first := strings.ReplaceAll(cancelReq, "{tag}", fmt.Sprintf("m%d-%d", mon.ID, firstAt.Unix()))
-	firstDown := strings.ReplaceAll(downReq, "{tag}", fmt.Sprintf("m%d-%d", mon.ID, firstAt.Unix()))
-	secondDown := strings.ReplaceAll(downReq, "{tag}", fmt.Sprintf("m%d-%d", mon.ID, secondAt.Unix()))
 	want := []string{
-		first,      // the UP alert cancels before Pushover has the first DOWN alert
-		first,      // the late delivery of the first DOWN alert cancels it
-		plainReq,   // the UP alert
-		firstDown,  // the first DOWN alert, failed attempt
-		firstDown,  // the first DOWN alert, delivered
-		secondDown, // the second DOWN alert, not cancelled
+		strings.ReplaceAll(cancelReq, "{tag}", fmt.Sprintf("m%d-%d", mon.ID, firstAt.Unix())), // the UP alert cancels
+		plainReq, // the UP alert
+		strings.ReplaceAll(downReq, "{tag}", fmt.Sprintf("m%d-%d", mon.ID, firstAt.Unix())), // the DOWN alert, failed attempt
 	}
 	sort.Strings(want)
 	if got := api.take(); got != strings.Join(want, "\n") {
@@ -260,6 +319,12 @@ func TestPushoverLateCancelAfterNewOutage(t *testing.T) {
 	}
 	if n := sleeps.Load(); n != 1 {
 		t.Fatalf("sleeps = %d, want 1", n)
+	}
+	if c, _ := st.Channel(ctx, ch.ID); c.LastError != "" {
+		t.Fatalf("channel error = %q, want none", c.LastError)
+	}
+	if !strings.Contains(logs.String(), "DOWN alert dropped") {
+		t.Fatal("the dropped retry was not logged")
 	}
 }
 
