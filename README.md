@@ -269,6 +269,12 @@ Run this on the server. It works while vexil runs and logs out every browser.
 vexil reset-password
 ```
 
+Docker:
+
+```
+docker exec -it vexil vexil reset-password
+```
+
 ## Development
 
 ```

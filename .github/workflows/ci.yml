@@ -55,18 +55,23 @@ jobs:
       - name: Check HTTPS and the health check inside the image
         run: |
           docker run -d --name vexil -p 8080:8080 vexil:ci
+          # The commands use the bare name: the binary must be on PATH.
           for i in $(seq 1 20); do
-            if docker exec vexil /vexil healthcheck; then break; fi
+            if docker exec vexil vexil healthcheck; then break; fi
             sleep 1
           done
-          docker exec vexil /vexil healthcheck
+          docker exec vexil vexil healthcheck
           # /data belongs to the nonroot user and the database was created.
-          docker exec vexil /vexil healthcheck | grep -q '"database":"ok"'
+          docker exec vexil vexil healthcheck | grep -q '"database":"ok"'
           docker inspect --format '{{.Config.User}}' vexil | grep -q 65532
           # A public monitor check over HTTPS proves the CA certificates work.
           curl -fsS -c jar -b jar -o /dev/null -d 'password=ci-password-1&confirm=ci-password-1' http://127.0.0.1:8080/setup
           curl -fsS -c jar -b jar -o /dev/null -d 'type=http&url=https://github.com&interval=60&public=1' http://127.0.0.1:8080/monitors/new
           sleep 5
           curl -fsS http://127.0.0.1:8080/badge/1.svg | grep -q '>up<'
+          # The password reset from SPEC 4.3 runs in the image. CI has no
+          # terminal, so the passwords come on stdin instead of with -t.
+          printf 'ci-password-2\nci-password-2\n' | docker exec -i vexil vexil reset-password
+          test "$(curl -sS -o /dev/null -w '%{http_code}' -d 'password=ci-password-2' http://127.0.0.1:8080/login)" = 303
           docker logs vexil
           docker rm -f vexil
