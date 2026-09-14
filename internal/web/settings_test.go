@@ -2,7 +2,10 @@ package web
 
 import (
 	"bytes"
+	"compress/zlib"
 	"context"
+	"encoding/binary"
+	"hash/crc32"
 	"image"
 	"image/png"
 	"io"
@@ -14,9 +17,83 @@ import (
 	"testing"
 
 	"github.com/InAtTheGeekEnd/vexil/internal/brand"
+	"github.com/InAtTheGeekEnd/vexil/internal/store"
 )
 
-const testPNG = "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+// testPNG is a real 2 by 2 PNG logo.
+var testPNG = func() string {
+	var b bytes.Buffer
+	_ = png.Encode(&b, image.NewNRGBA(image.Rect(0, 0, 2, 2)))
+	return b.String()
+}()
+
+// pngHeaderOnly returns a PNG file whose header claims a w by h RGBA image.
+// It has no pixel data.
+func pngHeaderOnly(w, h uint32) []byte {
+	var b bytes.Buffer
+	b.WriteString("\x89PNG\r\n\x1a\n")
+	chunk := func(typ string, data []byte) {
+		_ = binary.Write(&b, binary.BigEndian, uint32(len(data)))
+		b.WriteString(typ)
+		b.Write(data)
+		crc := crc32.NewIEEE()
+		crc.Write([]byte(typ))
+		crc.Write(data)
+		_ = binary.Write(&b, binary.BigEndian, crc.Sum32())
+	}
+	ihdr := make([]byte, 13)
+	binary.BigEndian.PutUint32(ihdr[0:4], w)
+	binary.BigEndian.PutUint32(ihdr[4:8], h)
+	ihdr[8], ihdr[9] = 8, 6 // 8-bit RGBA
+	chunk("IHDR", ihdr)
+	var z bytes.Buffer
+	_ = zlib.NewWriter(&z).Close()
+	chunk("IDAT", z.Bytes())
+	chunk("IEND", nil)
+	return b.Bytes()
+}
+
+// TestSettingsRefusesBadPNG uploads PNG logos that the server cannot draw
+// safely. Each must get a form error, and nothing may be saved: a saved one
+// would run the decoder again at every start. A small real PNG is saved.
+func TestSettingsRefusesBadPNG(t *testing.T) {
+	const tooBig = "The logo must be 4096 by 4096 pixels or smaller."
+	tests := []struct {
+		name    string
+		logo    []byte
+		wantErr string // empty means the logo is saved
+	}{
+		{"small real png", []byte(testPNG), ""},
+		{"65-byte png that claims 20000 by 20000", pngHeaderOnly(20000, 20000), tooBig},
+		{"png that claims 2^24 by 2^24", pngHeaderOnly(1<<24, 1<<24), tooBig},
+		{"png one pixel too wide", pngHeaderOnly(brand.MaxLogoSide+1, 1), tooBig},
+		{"png with no pixel data", pngHeaderOnly(8, 8), "The PNG logo cannot be read: export it again and upload the new file."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, st := newTestServer(t, Options{})
+			ts, c := loggedIn(t, s, st)
+			res := postMultipart(t, c, ts.URL+"/settings", map[string]string{"name": "Acme", "accent": "#4F46E5"}, tt.logo)
+			page := body(t, res)
+			saved, err := st.Settings(context.Background(), store.SettingBrandLogo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.wantErr == "" {
+				if res.StatusCode != http.StatusOK || saved[store.SettingBrandLogo] == "" || s.currentBrand().Logo.Type != "image/png" {
+					t.Fatalf("upload = %d, saved %v, type %q; want 200 and a saved PNG", res.StatusCode, saved[store.SettingBrandLogo] != "", s.currentBrand().Logo.Type)
+				}
+				return
+			}
+			if res.StatusCode != http.StatusBadRequest || !strings.Contains(page, tt.wantErr) {
+				t.Fatalf("upload = %d, want 400 with %q", res.StatusCode, tt.wantErr)
+			}
+			if saved[store.SettingBrandLogo] != "" || !s.currentBrand().Logo.Empty() {
+				t.Fatal("the bad logo was saved")
+			}
+		})
+	}
+}
 
 // postMultipart posts the settings form with an optional logo file.
 func postMultipart(t *testing.T, c *http.Client, target string, fields map[string]string, logo []byte) *http.Response {
