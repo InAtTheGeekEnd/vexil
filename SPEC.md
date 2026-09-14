@@ -281,6 +281,7 @@ When the monitor comes back UP, vexil cancels the repeats of its DOWN alert. vex
 
 - Send in a separate goroutine. A slow channel must not block checks.
 - Retry 3 times with backoff (5s, 30s, 2m). Then log the failure and show it on the Notifications page.
+- Retries live in memory. A restart can lose a pending retry.
 
 ---
 

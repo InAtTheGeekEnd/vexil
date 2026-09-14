@@ -179,9 +179,7 @@ func (s *Service) deliver(ctx context.Context, c store.Channel, m Message) {
 		return
 	}
 	if err != nil {
-		if ctx.Err() == nil {
-			s.fail(ctx, c, err.Error())
-		}
+		s.fail(ctx, c, err.Error())
 		return
 	}
 	// Clear the error on every success. This copy of the channel can be older
@@ -226,7 +224,7 @@ func (s *Service) withRetries(ctx context.Context, c store.Channel, what string,
 // failure is only logged. The channel error shows alert deliveries only.
 func (s *Service) cancel(ctx context.Context, c store.Channel, cn canceler, m Message) {
 	_, err := s.withRetries(ctx, c, "alert cancel", func(ctx context.Context) error { return cn.Cancel(ctx, m) })
-	if err != nil && ctx.Err() == nil {
+	if err != nil {
 		s.log.Error("alert cancel failed", "channel", c.ID, "name", c.Name, "type", c.Type, "err", err.Error())
 	}
 }
