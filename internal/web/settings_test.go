@@ -174,7 +174,7 @@ func TestSettingsBrand(t *testing.T) {
 	if !strings.Contains(b, "Settings saved.") || !strings.Contains(b, `value="#FACC15"`) {
 		t.Fatalf("saved page: %s", b)
 	}
-	if strings.Contains(b, "Powered by Acme Watch") {
+	if strings.Contains(b, "Powered by "+brand.ProductName) {
 		t.Fatal("footer line still shown after it was turned off")
 	}
 

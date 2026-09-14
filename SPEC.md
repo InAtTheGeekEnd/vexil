@@ -560,6 +560,7 @@ Settings page, section **Brand**:
 
 - The product name appears in the page titles, the header, emails and notification footers.
 - The code must use the brand setting everywhere. No hard-coded "vexil" in templates or messages. Add a test that searches templates for the literal string.
+- The "Powered by" footer and the `reset-password` help on the login page use the product name, not the brand name. They are the only two exceptions to the no-hard-coded-name rule. The name comes from the brand defaults in code, so the templates still have no literal.
 - The accent color generates a hover shade and a subtle tint automatically.
 
 ---
