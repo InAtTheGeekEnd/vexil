@@ -368,7 +368,7 @@ CREATE TABLE settings (
 - Open every connection with `PRAGMA foreign_keys = ON`, so a deleted monitor takes its checks, daily rows and incidents with it.
 - Migrations: numbered `.sql` files in `internal/store/migrations`, embedded, run at startup.
 - A background job runs every hour. It updates `daily` and deletes `checks` rows older than 30 days.
-- Backup: the user copies the `data` folder. Document this in the README.
+- Backup: the user runs `vexil backup <path>` and copies that file. Copying the live data folder can corrupt the copy, because the database runs in WAL mode.
 
 ---
 
