@@ -247,6 +247,14 @@
         body.append("in", group);
       });
     });
-    fetch("/monitors/reorder", { method: "POST", body: body, credentials: "same-origin" }).catch(function () {});
+    fetch("/monitors/reorder", { method: "POST", body: body, credentials: "same-origin" }).then(function (r) {
+      // A refused save, or a redirect to the login page when the session
+      // has ended, leaves an order on the page that the server does not
+      // have. Load the page again: it shows the stored order or the login.
+      if (!r.ok || r.redirected) location.reload();
+    }, function () {
+      // No network. A reload would show the browser error page, and the
+      // live connection already marks the page as old.
+    });
   }
 })();
