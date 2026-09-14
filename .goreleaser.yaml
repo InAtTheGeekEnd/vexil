@@ -43,6 +43,21 @@ changelog:
     exclude:
       - "^docs"
       - "^test"
+      - "^Merge"
+  # Every commit message starts with a prefix (CLAUDE.md). Other holds
+  # commits from before that rule and chore: commits.
+  groups:
+    - title: Fixes
+      regexp: "^fix:"
+      order: 0
+    - title: Performance
+      regexp: "^perf:"
+      order: 1
+    - title: Features
+      regexp: "^feat:"
+      order: 2
+    - title: Other
+      order: 999
 
 release:
   # A tag with a pre-release suffix makes a pre-release on GitHub.
