@@ -56,12 +56,20 @@
     input.focus();
   });
 
+  // hostOf takes the host out of a target: no scheme, no user, no port and
+  // no brackets. A bare IPv6 address stays whole, although its last group
+  // looks like a port.
   function hostOf(v) {
     v = v.trim();
     var m = v.match(/^[a-z][a-z0-9+.-]*:\/\/([^\/?#]+)/i);
     if (m) v = m[1];
-    v = v.replace(/^[^@]*@/, "").replace(/:\d+$/, "");
-    return v.replace(/^\[|\]$/g, "");
+    v = v.replace(/^[^@]*@/, "");
+    m = v.match(/^\[([^\]]*)\](:\d*)?$/);
+    if (m) return m[1];
+    // Only a value with one colon can end in a port: an IPv6 address has
+    // more than one.
+    if (v.split(":").length === 2) v = v.replace(/:\d*$/, "");
+    return v;
   }
 
   // Detail page: the response chart range toggle.
