@@ -3,9 +3,11 @@ package check
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strings"
@@ -70,6 +72,7 @@ func Describe(err error) string {
 	var unknownAuth x509.UnknownAuthorityError
 	var dnsErr *net.DNSError
 	var opErr *net.OpError
+	var recordErr tls.RecordHeaderError
 	switch {
 	case errors.As(err, &dnsErr):
 		if dnsErr.IsNotFound {
@@ -83,6 +86,10 @@ func Describe(err error) string {
 		return "timeout"
 	case errors.Is(err, context.Canceled):
 		return "cancelled"
+	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		return "connection closed"
+	case errors.As(err, &recordErr):
+		return "not an HTTPS server"
 	case errors.As(err, &certErr):
 		if certErr.Reason == x509.Expired {
 			return "certificate expired"
@@ -102,8 +109,13 @@ func Describe(err error) string {
 		return "timeout"
 	}
 	msg := err.Error()
-	if strings.Contains(msg, "tls:") || strings.Contains(msg, "x509:") {
+	if strings.Contains(msg, "x509:") {
 		return "invalid certificate"
+	}
+	// A TLS error that is not about the certificate, such as no common
+	// protocol version or cipher.
+	if strings.Contains(msg, "tls:") {
+		return "TLS handshake failed"
 	}
 	// net/http quotes the bytes of a response that it cannot parse. The
 	// server chooses those bytes, so they never go into the reason.
