@@ -3,6 +3,7 @@ package check
 import (
 	"context"
 	"errors"
+	"net"
 	"testing"
 	"time"
 
@@ -45,6 +46,29 @@ func TestPingCountsReplies(t *testing.T) {
 				t.Fatalf("Check = %+v, want OK=%v latency=%v error=%q", got, tt.wantOK, tt.wantLatency, tt.wantErr)
 			}
 		})
+	}
+}
+
+// TestPingLookupHonorsTheDeadline makes the name lookup hang. The check must
+// end at its deadline with "timeout" (SPEC.md section 4.4), not wait for the
+// resolver.
+func TestPingLookupHonorsTheDeadline(t *testing.T) {
+	old := lookupIP
+	lookupIP = func(ctx context.Context, host string) ([]net.IPAddr, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	t.Cleanup(func() { lookupIP = old })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	got := (&Ping{Host: "slow.example.com"}).Check(ctx)
+	if got.OK || got.Error != "timeout" {
+		t.Fatalf("Check = %+v, want the error timeout", got)
+	}
+	if took := time.Since(start); took > 2*time.Second {
+		t.Fatalf("the check took %v, want about the 300ms deadline", took)
 	}
 }
 

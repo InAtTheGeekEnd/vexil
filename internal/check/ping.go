@@ -2,6 +2,7 @@ package check
 
 import (
 	"context"
+	"net"
 	"strings"
 	"time"
 
@@ -50,10 +51,42 @@ func (p *Ping) Check(ctx context.Context) Result {
 	return Result{Error: "no reply"}
 }
 
+// lookupIP resolves a host name. Tests replace it.
+var lookupIP = net.DefaultResolver.LookupIPAddr
+
+// resolvePing returns the address to ping for host, within the deadline of
+// ctx. An IP address comes back as it is. A name gives its first IPv4
+// address, as the resolver of probing does, or its first address when it
+// has no IPv4 one.
+func resolvePing(ctx context.Context, host string) (string, error) {
+	if net.ParseIP(host) != nil {
+		return host, nil
+	}
+	addrs, err := lookupIP(ctx, host)
+	if err != nil {
+		return "", err
+	}
+	if len(addrs) == 0 {
+		return "", &net.DNSError{Err: "no address", Name: host, IsNotFound: true}
+	}
+	for _, a := range addrs {
+		if a.IP.To4() != nil {
+			return a.IP.String(), nil
+		}
+	}
+	return addrs[0].String(), nil
+}
+
 // runPing sends 3 echo requests and waits for the replies until the run
 // ends: after 3 replies, or pingMargin before the deadline of ctx.
 func runPing(ctx context.Context, host string) (*probing.Statistics, error) {
-	pinger, err := probing.NewPinger(host)
+	// probing.NewPinger resolves a name without a context, so a DNS server
+	// that does not answer could hold the check past its timeout.
+	addr, err := resolvePing(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	pinger, err := probing.NewPinger(addr)
 	if err != nil {
 		return nil, err
 	}
