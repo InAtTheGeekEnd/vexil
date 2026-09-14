@@ -26,7 +26,8 @@ CREATE TABLE checks (
   error       TEXT,
   FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
 );
-CREATE INDEX checks_monitor_at ON checks(monitor_id, at);
+-- Covering: the stats read ok and latency_ms from the index, not the table.
+CREATE INDEX checks_monitor_at ON checks(monitor_id, at, ok, latency_ms);
 
 CREATE TABLE daily (
   monitor_id  INTEGER NOT NULL,
