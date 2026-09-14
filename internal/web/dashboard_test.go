@@ -75,20 +75,6 @@ func TestDashboardGroups(t *testing.T) {
 	id := func(n int64) string { return strconv.FormatInt(n, 10) }
 	heading := func(name string) string { return `id="group-` + id(groups[name]) + `"` }
 	row := func(name string) string { return `data-id="` + id(ids[name]) + `"` }
-	// inOrder fails the test unless each marker is on the page after the
-	// marker before it.
-	inOrder := func(t *testing.T, b string, markers ...string) {
-		t.Helper()
-		last := -1
-		for _, m := range markers {
-			i := strings.Index(b, m)
-			if i <= last {
-				t.Fatalf("%s is at %d, want after %d", m, i, last)
-			}
-			last = i
-		}
-	}
-
 	// Shop lifts into the strip above the groups. The strip does not show
 	// its group, and the row keeps its group and position for its return.
 	// The empty group shows its heading. Loose is in no group, below them.

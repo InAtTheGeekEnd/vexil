@@ -81,6 +81,7 @@ type monitorRow struct {
 	Kind       string // "check" or "push", the verb for the checked line
 	Position   int
 	Group      int64 // the id of the group the row belongs in, 0 for none
+	DownSince  int64 // unix seconds of the start of the open incident, 0 for none
 }
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
@@ -102,7 +103,6 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		content.Groups[i] = dashGroup{ID: g.ID, Name: g.Name}
 		index[g.ID] = i
 	}
-	downRows := map[int64][]monitorRow{} // the DOWN rows by group, 0 for none
 	var down, pending, active int
 	for _, m := range monitors {
 		st := s.monitorStatus(m)
@@ -153,19 +153,18 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 		switch {
 		case st.State == engine.Down:
-			downRows[row.Group] = append(downRows[row.Group], row)
+			if row.DownSince, err = s.downSince(ctx, m.ID); err != nil {
+				s.serverError(w, err)
+				return
+			}
+			content.Down = append(content.Down, row)
 		case grouped:
 			content.Groups[gi].Rows = append(content.Groups[gi].Rows, row)
 		default:
 			content.Ungrouped = append(content.Ungrouped, row)
 		}
 	}
-	// The strip lists the DOWN rows in page order: by group, then the rows
-	// in no group.
-	for _, g := range content.Groups {
-		content.Down = append(content.Down, downRows[g.ID]...)
-	}
-	content.Down = append(content.Down, downRows[0]...)
+	sortStrip(content.Down)
 	content.Headline, content.State = headline(down, pending, active)
 	content.Count = plural(len(monitors), "monitor")
 	s.render(w, http.StatusOK, "dashboard.html", pageData{Content: content, Live: true, Down: down, Nav: "dashboard"})

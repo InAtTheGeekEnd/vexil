@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -23,11 +24,14 @@ type checkEvent struct {
 }
 
 // stateEvent is the data of a "state" event: a new state plus the number of
-// monitors that are down, for the tab title and the favicon.
+// monitors that are down, for the tab title and the favicon. For a DOWN
+// state, Since is the start of the open incident in unix seconds: the page
+// orders the strip by it.
 type stateEvent struct {
 	ID    int64  `json:"id"`
 	State string `json:"state"`
 	Down  int    `json:"down"`
+	Since int64  `json:"since,omitempty"`
 }
 
 // handleEvents streams engine events as server-sent events. It ends when
@@ -66,7 +70,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case ev := <-events:
-			if err := s.writeEvent(w, ev); err != nil {
+			if err := s.writeEvent(r.Context(), w, ev); err != nil {
 				return
 			}
 		}
@@ -78,7 +82,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 // writeEvent sends a "check" event for a result and a "state" event for a
 // state change. An event can carry both.
-func (s *Server) writeEvent(w http.ResponseWriter, ev engine.Event) error {
+func (s *Server) writeEvent(ctx context.Context, w http.ResponseWriter, ev engine.Event) error {
 	if ev.Result != (check.Result{}) {
 		data := checkEvent{ID: ev.MonitorID, OK: ev.Result.OK, Latency: ev.Result.Latency.Milliseconds(), Error: ev.Result.Error}
 		if err := writeSSE(w, "check", data); err != nil {
@@ -87,6 +91,14 @@ func (s *Server) writeEvent(w http.ResponseWriter, ev engine.Event) error {
 	}
 	if ev.State != ev.Prev {
 		data := stateEvent{ID: ev.MonitorID, State: stateClass(ev.State), Down: s.downCount()}
+		if ev.State == engine.Down {
+			// The engine opens the incident before it publishes the event.
+			since, err := s.downSince(ctx, ev.MonitorID)
+			if err != nil {
+				s.log.Error("read the open incident", "monitor", ev.MonitorID, "err", err)
+			}
+			data.Since = since
+		}
 		if err := writeSSE(w, "state", data); err != nil {
 			return err
 		}

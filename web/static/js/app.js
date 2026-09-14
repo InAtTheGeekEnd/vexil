@@ -82,7 +82,7 @@
   var dash = document.getElementById("dash");
   if (!dash) return;
   var groups = document.getElementById("groups"); // null without groups
-  var drag = null; // { item, kind, pointer, moved }; kind is "row" or "group"
+  var drag = null; // { item, kind, pointer, y, moved }; kind is "row" or "group"
 
   // lists returns the lists a row can go into, in page order: the groups,
   // then the monitors in no group. The strip is not one of them.
@@ -97,7 +97,7 @@
     var item = handle.closest(kind === "group" ? ".dash-group" : ".mon-row");
     if (item.closest(".mon-strip")) return;
     e.preventDefault();
-    drag = { item: item, kind: kind, pointer: e.pointerId, moved: false };
+    drag = { item: item, kind: kind, pointer: e.pointerId, y: e.clientY, moved: false };
     handle.setPointerCapture(e.pointerId);
     item.classList.add("dragging");
     dash.dataset.drag = kind;
@@ -125,17 +125,24 @@
   document.addEventListener("pointerup", endDrag);
   document.addEventListener("pointercancel", endDrag);
 
-  // dragGroup puts the dragged group before the first other group whose
-  // heading is below the pointer.
+  // dragGroup moves the dragged group past the group under the pointer:
+  // after it when the pointer moves down, before it when the pointer moves
+  // up. Every part of a group is a target, the heading and the rows. The
+  // direction keeps a group from jumping back while the pointer is still
+  // over the group it just passed.
   function dragGroup(y) {
+    if (Math.abs(y - drag.y) < 4) return;
+    var down = y > drag.y;
+    drag.y = y;
     var others = groups.querySelectorAll(".dash-group");
-    var target = null;
     for (var i = 0; i < others.length; i++) {
-      if (others[i] === drag.item) continue;
-      var box = others[i].querySelector(".group-head").getBoundingClientRect();
-      if (y < box.top + box.height / 2) { target = others[i]; break; }
+      var box = others[i].getBoundingClientRect();
+      if (others[i] === drag.item || y < box.top || y > box.bottom) continue;
+      var below = drag.item.compareDocumentPosition(others[i]) & Node.DOCUMENT_POSITION_FOLLOWING;
+      if (down && below) move(groups, drag.item, others[i].nextElementSibling);
+      if (!down && !below) move(groups, drag.item, others[i]);
+      return;
     }
-    move(groups, drag.item, target);
   }
 
   // dragRow puts the dragged row in the last list that starts above the

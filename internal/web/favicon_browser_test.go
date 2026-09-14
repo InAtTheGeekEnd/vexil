@@ -251,6 +251,16 @@ func waitFor(t *testing.T, c *chrome, session, expr, what string) {
 	t.Fatalf("timed out waiting for %s", what)
 }
 
+// loadPage navigates the page and waits for the new document. The marker is
+// gone once the new document has replaced the old one.
+func loadPage(t *testing.T, c *chrome, session, pageURL string) {
+	t.Helper()
+	var ok bool
+	c.eval(session, "(window.probeOld = true)", &ok)
+	c.call(session, "Page.navigate", map[string]any{"url": pageURL})
+	waitFor(t, c, session, "document.readyState === 'complete' && !window.probeOld", "the page to load")
+}
+
 // openPage opens a page with a theme in headless Chrome and returns the
 // page session. init, when set, runs before the page scripts on every load.
 // It loads the page twice with the theme and checks that the icon URL is
@@ -276,11 +286,7 @@ func openPage(t *testing.T, path, pageURL, theme, init string) (*chrome, string)
 		c.call(session, "Page.addScriptToEvaluateOnNewDocument", map[string]any{"source": init})
 	}
 	load := func() string {
-		// The marker is gone once the new document has replaced the old one.
-		var ok bool
-		c.eval(session, "(window.probeOld = true)", &ok)
-		c.call(session, "Page.navigate", map[string]any{"url": pageURL})
-		waitFor(t, c, session, "document.readyState === 'complete' && !window.probeOld", "the page to load")
+		loadPage(t, c, session, pageURL)
 		var href string
 		c.eval(session, "document.querySelector('link[rel=icon]').getAttribute('href')", &href)
 		return href

@@ -105,12 +105,29 @@
     // A DOWN row lifts into the strip above the groups. A recovered row
     // goes back to its place in its group.
     if (ev.state === "down") {
-      dash.querySelector(".mon-strip").appendChild(row);
+      row.dataset.since = ev.since || 0;
+      toStrip(row);
     } else if (old === "down") {
+      delete row.dataset.since;
       goHome(row);
     }
     slide(before);
     headline();
+  }
+
+  // toStrip puts a DOWN row into the strip by outage start, newest first.
+  // Equal starts go in monitor id order. The rule must match sortStrip() in
+  // Go, so a reload shows the same order.
+  function toStrip(row) {
+    var strip = dash.querySelector(".mon-strip");
+    var since = +row.dataset.since, id = +row.dataset.id;
+    var rows = strip.querySelectorAll(".mon-row");
+    var next = null;
+    for (var i = 0; i < rows.length; i++) {
+      var other = +rows[i].dataset.since || 0;
+      if (other < since || (other === since && +rows[i].dataset.id > id)) { next = rows[i]; break; }
+    }
+    strip.insertBefore(row, next);
   }
 
   // goHome puts a row into its group before the first row with a higher

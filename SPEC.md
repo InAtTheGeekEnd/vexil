@@ -425,7 +425,7 @@ On failure, the failed part shows a short reason, for example `"database": "lock
 - The whole row is a link to the detail page.
 - Groups show in position order. Each group is a heading with its monitors below it. A group with no monitors still shows its heading, so the user can drag monitors into it.
 - Monitors in no group go below all the groups, with no heading.
-- A DOWN monitor lifts out of its group into a strip at the top, above all the groups. The strip does not show group names. The monitor returns to its place in its group when it recovers.
+- A DOWN monitor lifts out of its group into a strip at the top, above all the groups. The strip is in order of outage start (the start of the open incident), newest first, so a new outage goes to the top. The page uses this order when it loads and when a monitor goes down live. The strip does not show group names. The monitor returns to its place in its group when it recovers.
 - Drag a group heading to reorder the groups. Its monitors move with it.
 - Drag a monitor row to move it inside its group, into another group, or into the monitors in no group below the groups.
 - Both drags save on drop. Each grip also moves with the up and down arrow keys.
