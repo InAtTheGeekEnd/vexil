@@ -46,7 +46,9 @@ func (w *gzipWriter) WriteHeader(code int) {
 	if !w.decided {
 		w.decided = true
 		h := w.Header()
-		if code < 300 && compressible(h.Get("Content-Type")) && h.Get("Content-Encoding") == "" {
+		// A 206 response carries a Content-Range of the plain file, which
+		// a compressed body would not match.
+		if code < 300 && code != http.StatusPartialContent && compressible(h.Get("Content-Type")) && h.Get("Content-Encoding") == "" {
 			h.Set("Content-Encoding", "gzip")
 			h.Add("Vary", "Accept-Encoding")
 			h.Del("Content-Length")
