@@ -11,6 +11,7 @@ import (
 	"crypto/x509/pkix"
 	"math/big"
 	"net"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -185,6 +186,35 @@ func TestEmail(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestEmailMessageID sends two alert emails. Each must carry a Message-ID in
+// the domain of the From address, and the two must differ: some receivers
+// refuse mail without one.
+func TestEmailMessageID(t *testing.T) {
+	f, addr := newFakeSMTP(t, "plain")
+	host, port, _ := net.SplitHostPort(addr)
+	e := &email{host: host, port: port, from: "Alerts Bot <alerts@example.com>", to: "ops@example.org"}
+	id := regexp.MustCompile(`(?m)^Message-ID: (<\d+\.[0-9a-f]{16}@example\.com>)\r$`)
+	var seen []string
+	for i := 1; i <= 2; i++ {
+		if err := e.Send(context.Background(), downMsg); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case body := <-f.data:
+			m := id.FindStringSubmatch(body)
+			if m == nil {
+				t.Fatalf("mail %d has no Message-ID in the From domain", i)
+			}
+			seen = append(seen, m[1])
+		case <-time.After(2 * time.Second):
+			t.Fatalf("mail %d did not arrive", i)
+		}
+	}
+	if seen[0] == seen[1] {
+		t.Fatalf("both mails have the Message-ID %s", seen[0])
 	}
 }
 
