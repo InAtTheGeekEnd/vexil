@@ -76,6 +76,10 @@
 
   function onState(ev) {
     setDown(ev.down);
+    if (ev.state === "deleted") {
+      onDeleted(ev);
+      return;
+    }
     if (lastLine && +lastLine.dataset.monitor === ev.id) {
       // The tiles, the chart and the incident list all change with the
       // state. A fresh page is simpler than patching each one.
@@ -110,6 +114,27 @@
     } else if (old === "down") {
       delete row.dataset.since;
       goHome(row);
+    }
+    slide(before);
+    headline();
+  }
+
+  // onDeleted takes a deleted monitor off the page. The detail page of that
+  // monitor goes to the dashboard.
+  function onDeleted(ev) {
+    if (lastLine && +lastLine.dataset.monitor === ev.id) {
+      location.replace("/");
+      return;
+    }
+    if (!dash) return;
+    var row = dash.querySelector('.mon-row[data-id="' + ev.id + '"]');
+    if (!row) return;
+    var before = positions();
+    row.remove();
+    if (!dash.querySelector(".mon-row")) {
+      // The last monitor is gone: the server page shows the empty state.
+      reloadWhenVisible();
+      return;
     }
     slide(before);
     headline();

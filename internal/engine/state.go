@@ -15,6 +15,9 @@ const (
 	Up      State = "UP"
 	Down    State = "DOWN"
 	Paused  State = "PAUSED"
+	// Deleted appears only in the event of a monitor delete. No status has
+	// it.
+	Deleted State = "DELETED"
 )
 
 // failuresBeforeDown is the fixed number of failed checks in a row before a

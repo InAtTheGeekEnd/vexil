@@ -222,6 +222,8 @@ func stateClass(st engine.State) string {
 		return "down"
 	case engine.Paused:
 		return "paused"
+	case engine.Deleted:
+		return "deleted"
 	}
 	return "pending"
 }

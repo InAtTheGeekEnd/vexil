@@ -253,8 +253,14 @@ func (e *Engine) DeleteMonitor(ctx context.Context, id int64) error {
 		return err
 	}
 	e.mu.Lock()
+	prev := Pending
+	if st := e.status[id]; st != nil {
+		prev = st.State
+	}
 	delete(e.status, id)
 	e.mu.Unlock()
+	// Open pages take the monitor off and correct their down count.
+	e.hub.Publish(Event{MonitorID: id, Prev: prev, State: Deleted, At: time.Now()})
 	return nil
 }
 
