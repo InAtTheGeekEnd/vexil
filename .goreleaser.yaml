@@ -28,6 +28,11 @@ archives:
     files:
       - LICENSE
       - README.md
+      # The README links to these files, so they keep their paths. The OFL
+      # must travel with the font.
+      - web/static/fonts/OFL.txt
+      - web/static/brand/LICENSE
+      - docs/screenshots/*.png
 
 checksum:
   name_template: checksums.txt
