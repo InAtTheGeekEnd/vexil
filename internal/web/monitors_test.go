@@ -154,7 +154,7 @@ func TestMonitorFormValidation(t *testing.T) {
 		{"missing url", url.Values{"type": {"http"}, "interval": {"60"}}, "starts with http://"},
 		{"url without scheme", url.Values{"type": {"http"}, "url": {"example.com"}, "interval": {"60"}}, "starts with http://"},
 		{"tcp without host", url.Values{"type": {"tcp"}, "port": {"80"}, "interval": {"60"}}, "Enter a host name"},
-		{"tcp bad port", url.Values{"type": {"tcp"}, "host": {"db"}, "port": {"70000"}, "interval": {"60"}}, "between 1 and 65535"},
+		{"tcp bad port", url.Values{"type": {"tcp"}, "host": {"db"}, "port": {"70000"}, "interval": {"60"}}, "Enter a number between 1 and 65535."},
 		{"ping without host", url.Values{"type": {"ping"}, "interval": {"60"}}, "Enter a host name"},
 		{"dns bad ip", url.Values{"type": {"dns"}, "hostname": {"example.com"}, "expected_ip": {"nope"}, "interval": {"60"}}, "valid IP address"},
 		{"bad interval", url.Values{"type": {"push"}, "name": {"Job"}, "interval": {"45"}}, "Choose an interval"},

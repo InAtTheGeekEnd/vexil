@@ -114,6 +114,51 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+func TestValidateNumberMessage(t *testing.T) {
+	email := map[string]string{"host": "smtp.example.com", "from": "a@example.com", "to": "b@example.com"}
+	pushover := map[string]string{"user": "u", "token": "a", "repeat": "1", "retry": "1", "expire": "60"}
+	with := func(base map[string]string, key, value string) map[string]string {
+		out := map[string]string{key: value}
+		for k, v := range base {
+			if k != key {
+				out[k] = v
+			}
+		}
+		return out
+	}
+	tests := []struct {
+		name    string
+		channel store.Channel
+		key     string
+		want    string
+	}{
+		{"email port", store.Channel{Type: store.ChannelEmail, Config: with(email, "port", "70000")}, "port", "Enter a number between 1 and 65535."},
+		{"pushover retry interval", store.Channel{Type: store.ChannelPushover, Config: with(pushover, "retry", "61")}, "retry", "Enter a number between 1 and 60."},
+		{"pushover expiry time", store.Channel{Type: store.ChannelPushover, Config: with(pushover, "expire", "181")}, "expire", "Enter a number between 1 and 180."},
+		{"not a number", store.Channel{Type: store.ChannelPushover, Config: with(pushover, "expire", "soon")}, "expire", "Enter a number between 1 and 180."},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := Validate(tc.channel)
+			if len(errs) != 1 || errs[tc.key] != tc.want {
+				t.Fatalf("errors = %v, want %s: %q", errs, tc.key, tc.want)
+			}
+		})
+	}
+}
+
+// A number field without its own range would get the message "between 0
+// and 0". Every number field must set Min and Max.
+func TestNumberFieldsHaveARange(t *testing.T) {
+	for _, typ := range Types {
+		for _, f := range Fields(typ.Type) {
+			if f.Type == "number" && f.Max <= f.Min {
+				t.Errorf("%s field %q has no range: Min %d, Max %d", typ.Type, f.Key, f.Min, f.Max)
+			}
+		}
+	}
+}
+
 func TestRedaction(t *testing.T) {
 	secret := "https://hooks.slack.com/services/T000/B000/SECRETTOKEN"
 	inner := errors.New("dial tcp 203.0.113.9:443: connect: connection refused")

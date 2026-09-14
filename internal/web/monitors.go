@@ -470,7 +470,7 @@ func (f *monitorForm) validate() store.Monitor {
 			f.Errors["host"] = "Enter a host name or IP address."
 		}
 		if f.Port == "" || err != nil || port < 1 || port > 65535 {
-			f.Errors["port"] = "Enter a port between 1 and 65535."
+			f.Errors["port"] = "Enter a number between 1 and 65535."
 		}
 		if f.Errors["host"] == "" && f.Errors["port"] == "" {
 			m.Target = net.JoinHostPort(f.Host, f.Port)
