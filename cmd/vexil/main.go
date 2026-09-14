@@ -221,15 +221,12 @@ func backup(cfg config.Config, path string) error {
 // healthcheck asks the running server for /readyz. Docker calls it, as the
 // distroless image has no curl.
 func healthcheck(cfg config.Config) error {
-	host, port, err := net.SplitHostPort(cfg.Addr)
+	target, err := readyzURL(cfg.Addr)
 	if err != nil {
-		return fmt.Errorf("bad listen address %q: %w", cfg.Addr, err)
-	}
-	if host == "" || host == "0.0.0.0" || host == "::" {
-		host = "127.0.0.1"
+		return err
 	}
 	client := &http.Client{Timeout: 3 * time.Second}
-	res, err := client.Get("http://" + net.JoinHostPort(host, port) + "/readyz")
+	res, err := client.Get(target)
 	if err != nil {
 		return err
 	}
@@ -240,6 +237,20 @@ func healthcheck(cfg config.Config) error {
 	}
 	fmt.Println(strings.TrimSpace(string(body)))
 	return nil
+}
+
+// readyzURL returns the /readyz URL of the server that listens on addr. A
+// listen address with no host, or on every interface, is asked on
+// 127.0.0.1.
+func readyzURL(addr string) (string, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", fmt.Errorf("bad listen address %q: %w", addr, err)
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	return "http://" + net.JoinHostPort(host, port) + "/readyz", nil
 }
 
 // prompt reads one line from stdin. On a terminal it hides the typed text.

@@ -36,6 +36,35 @@ func TestVersionString(t *testing.T) {
 	}
 }
 
+// TestReadyzURL maps listen addresses to the URL that the healthcheck
+// command asks. An address with no host or on every interface is asked on
+// 127.0.0.1. A bad address is an error.
+func TestReadyzURL(t *testing.T) {
+	tests := []struct {
+		addr    string
+		want    string
+		wantErr bool
+	}{
+		{":8080", "http://127.0.0.1:8080/readyz", false},
+		{"0.0.0.0:9000", "http://127.0.0.1:9000/readyz", false},
+		{"[::]:8080", "http://127.0.0.1:8080/readyz", false},
+		{"127.0.0.1:18091", "http://127.0.0.1:18091/readyz", false},
+		{"192.168.1.5:80", "http://192.168.1.5:80/readyz", false},
+		{"[::1]:8080", "http://[::1]:8080/readyz", false},
+		{"localhost:8080", "http://localhost:8080/readyz", false},
+		{"8080", "", true},
+		{"", "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.addr, func(t *testing.T) {
+			got, err := readyzURL(tt.addr)
+			if (err != nil) != tt.wantErr || got != tt.want {
+				t.Fatalf("readyzURL(%q) = %q, %v; want %q, error %v", tt.addr, got, err, tt.want, tt.wantErr)
+			}
+		})
+	}
+}
+
 // TestBackup runs the backup command while the database is open, as it is
 // while the server runs. A second run to the same file, a missing file name
 // and a data folder with no database must fail.
