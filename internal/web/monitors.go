@@ -108,6 +108,24 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
+	// A day in the window without any daily row is not rolled up yet, as
+	// yesterday is until the job runs just after midnight. Count those days
+	// from the checks, in one more query for all monitors.
+	if missing := missingDays(first, today, daily); len(missing) > 0 {
+		counted, err := s.store.DailyFromChecks(ctx, missing)
+		if err != nil {
+			s.serverError(w, err)
+			return
+		}
+		for id, byDay := range counted {
+			if daily[id] == nil {
+				daily[id] = map[string]store.DayTotals{}
+			}
+			for day, t := range byDay {
+				daily[id][day] = t
+			}
+		}
+	}
 	incidents, err := s.store.IncidentDays(ctx, first)
 	if err != nil {
 		s.serverError(w, err)
@@ -196,6 +214,25 @@ func headline(down, pending, active int) (string, string) {
 		return "Waiting for the first checks", "pending"
 	}
 	return "All systems operational", "up"
+}
+
+// missingDays returns the days from first to the day before today that no
+// monitor has a daily row for. The job writes the rows of a day for all
+// monitors in one statement, so a day that one monitor has is complete.
+func missingDays(first, today time.Time, daily map[int64]map[string]store.DayTotals) []time.Time {
+	have := map[string]bool{}
+	for _, byDay := range daily {
+		for day := range byDay {
+			have[day] = true
+		}
+	}
+	var out []time.Time
+	for d := first; d.Before(today); d = d.AddDate(0, 0, 1) {
+		if !have[d.Format("2006-01-02")] {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 // dashboardDays builds the 30 days of the uptime bar of one monitor: the

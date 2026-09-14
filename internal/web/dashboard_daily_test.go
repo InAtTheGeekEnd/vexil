@@ -9,6 +9,55 @@ import (
 	"github.com/InAtTheGeekEnd/vexil/internal/store"
 )
 
+// TestDashboardCountsMissingDays rolls up two days before today, then adds
+// checks for yesterday, which has no daily row yet, as just after midnight.
+// The bar and the percent must count yesterday from its checks: days -3 and
+// -2 give 9 of 10 each from their daily rows, yesterday 8 of 10 from its
+// checks, today 5 of 10. That is 31 of 40, or 77.5%. Without yesterday it
+// would be 23 of 30.
+func TestDashboardCountsMissingDays(t *testing.T) {
+	s, st := newIdleServer(t, Options{})
+	ts, c := loggedIn(t, s, st)
+	ctx := context.Background()
+	m := &store.Monitor{Name: "API", Type: store.TypeHTTP, Target: "https://api.example.com", IntervalS: 60}
+	if err := st.CreateMonitor(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	today := now.UTC().Truncate(24 * time.Hour)
+	insert := func(at time.Time, ok bool) {
+		t.Helper()
+		if err := st.InsertCheck(ctx, store.Check{MonitorID: m.ID, At: at, OK: ok, LatencyMS: 40}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for d := 2; d <= 3; d++ {
+		for i := 0; i < 10; i++ {
+			insert(today.AddDate(0, 0, -d).Add(12*time.Hour+time.Duration(i)*time.Minute), i > 0)
+		}
+	}
+	if err := st.RollupDays(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 10; i++ {
+		insert(today.AddDate(0, 0, -1).Add(12*time.Hour+time.Duration(i)*time.Minute), i > 1)
+	}
+	for i := 0; i < 10; i++ {
+		insert(now.Add(-time.Duration(i)*100*time.Millisecond), i%2 == 0)
+	}
+
+	b := body(t, get(t, c, ts.URL+"/"))
+	if want := formatPercent(77.5) + "<small>%</small>"; !strings.Contains(b, want) {
+		t.Errorf("dashboard lacks the 30-day uptime %q", want)
+	}
+	if strings.Contains(b, formatPercent(float64(23)*100/30)+"<small>%</small>") {
+		t.Error("the dashboard leaves out yesterday, which has no daily row")
+	}
+	if n := strings.Count(b, `class="seg seg-down"`); n != 4 {
+		t.Errorf("segments below 95%% = %d, want 4: two days at 90%%, yesterday at 80%% and today at 50%%", n)
+	}
+}
+
 // TestDashboardReadsDaily gives a monitor three days before today with 9 of
 // 10 checks up, rolled up into daily rows, and then more raw checks on those
 // days that are all up. Today has 10 checks, 5 up. The bar and the percent

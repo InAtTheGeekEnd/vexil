@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"database/sql"
+	"slices"
+	"strings"
 	"time"
 )
 
@@ -117,6 +119,55 @@ func (s *Store) DailyTotals(ctx context.Context, first, last time.Time) (map[int
 	}
 	defer rows.Close()
 	out := map[int64]map[string]DayTotals{}
+	for rows.Next() {
+		var id int64
+		var day string
+		var t DayTotals
+		if err := rows.Scan(&id, &day, &t.Total, &t.OK); err != nil {
+			return nil, err
+		}
+		if out[id] == nil {
+			out[id] = map[string]DayTotals{}
+		}
+		out[id][day] = t
+	}
+	return out, rows.Err()
+}
+
+// DailyFromChecks counts the checks of every monitor on the given UTC days,
+// by monitor id and day, in one query. It is for days whose daily rows are
+// not written yet, as yesterday is in the first seconds after midnight.
+func (s *Store) DailyFromChecks(ctx context.Context, days []time.Time) (map[int64]map[string]DayTotals, error) {
+	out := map[int64]map[string]DayTotals{}
+	if len(days) == 0 {
+		return out, nil
+	}
+	sorted := slices.Clone(days)
+	slices.SortFunc(sorted, func(a, b time.Time) int { return a.Compare(b) })
+	// One part of the UNION per run of days in a row, so each part searches
+	// the index over one time range.
+	var parts []string
+	var args []any
+	for i := 0; i < len(sorted); {
+		start := sorted[i].UTC().Truncate(24 * time.Hour)
+		end := start.Add(24 * time.Hour)
+		j := i + 1
+		for j < len(sorted) && !sorted[j].UTC().Truncate(24*time.Hour).After(end) {
+			if t := sorted[j].UTC().Truncate(24 * time.Hour); t.Equal(end) {
+				end = end.Add(24 * time.Hour)
+			}
+			j++
+		}
+		parts = append(parts, `SELECT monitor_id, strftime('%Y-%m-%d', at, 'unixepoch'), COUNT(*), SUM(ok)
+			FROM checks WHERE monitor_id IN (SELECT id FROM monitors) AND at >= ? AND at < ? GROUP BY 1, 2`)
+		args = append(args, start.Unix(), end.Unix())
+		i = j
+	}
+	rows, err := s.db.QueryContext(ctx, strings.Join(parts, " UNION ALL "), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 	for rows.Next() {
 		var id int64
 		var day string
