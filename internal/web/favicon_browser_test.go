@@ -525,9 +525,6 @@ func TestStatusIconPixels(t *testing.T) {
 		t.Skip("no Chrome or Chromium found; set VEXIL_CHROME")
 	}
 	banner := [2]int{32, 34}
-	// fastRefresh runs before the page scripts and turns the one minute
-	// refresh timer into half a second.
-	const fastRefresh = `(function () { var wait = window.setTimeout; window.setTimeout = function (f, d) { return wait(f, d >= 60000 ? 500 : d); }; })();`
 	open := func(t *testing.T, privateDown, publicDown bool, init string) (*Server, int64, *chrome, string) {
 		t.Helper()
 		s, st, ids := seedServer(t, seed{name: "Private", down: privateDown}, seed{name: "Public", down: publicDown, public: true})

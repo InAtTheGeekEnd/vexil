@@ -1018,3 +1018,17 @@ img.brand-logo { object-fit: contain; }
 .status-head > .dot { flex-shrink: 0; }
 .status-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status-pct { margin-left: auto; flex-shrink: 0; white-space: nowrap; }
+/* Groups on the status page. The name is a quiet label that lines up with
+   the status dots, not a divider. */
+.status-groups { display: flex; flex-direction: column; gap: 24px; }
+.status-group { display: flex; flex-direction: column; gap: 8px; }
+.status-group-name {
+  margin: 0;
+  padding: 0 20px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

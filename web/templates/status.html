@@ -14,19 +14,16 @@
     <h1 class="t-20">{{.Headline}}</h1>
   </section>
 
-  {{if .Rows}}
-  <ul class="status-list">
-  {{range .Rows}}
-    <li class="status-row">
-      <span class="status-head">
-        <span class="dot dot-{{.State}}"><span class="sr-only">{{.StateLabel}}</span></span>
-        <span class="w-600 status-name" title="{{.Name}}">{{.Name}}</span>
-        <span class="status-pct muted small">{{if .UptimePct}}{{.UptimePct}}% over 90 days{{else}}No data yet{{end}}</span>
-      </span>
-      <span class="uptime uptime-90" role="img" aria-label="Uptime for the last 90 days: {{if .UptimePct}}{{.UptimePct}}%{{else}}no data yet{{end}}">{{range .Uptime}}<span class="seg {{.Class}}" data-tip="{{.Tip}}"></span>{{end}}</span>
-    </li>
+  {{if .Monitors}}
+  <div class="status-groups">
+  {{range .Groups}}
+    <section class="status-group">
+      <h2 class="status-group-name" title="{{.Name}}">{{.Name}}</h2>
+      {{template "status-rows" .Rows}}
+    </section>
   {{end}}
-  </ul>
+  {{with .Ungrouped}}{{template "status-rows" .}}{{end}}
+  </div>
   {{else}}
   <section class="empty">
     <p class="lead">No monitors are on this page yet.</p>
@@ -54,3 +51,16 @@
 </main>
 {{template "footer" .}}
 {{end}}
+
+{{define "status-rows"}}<ul class="status-list">
+    {{range .}}
+      <li class="status-row">
+        <span class="status-head">
+          <span class="dot dot-{{.State}}"><span class="sr-only">{{.StateLabel}}</span></span>
+          <span class="w-600 status-name" title="{{.Name}}">{{.Name}}</span>
+          <span class="status-pct muted small">{{if .UptimePct}}{{.UptimePct}}% over 90 days{{else}}No data yet{{end}}</span>
+        </span>
+        <span class="uptime uptime-90" role="img" aria-label="Uptime for the last 90 days: {{if .UptimePct}}{{.UptimePct}}%{{else}}no data yet{{end}}">{{range .Uptime}}<span class="seg {{.Class}}" data-tip="{{.Tip}}"></span>{{end}}</span>
+      </li>
+    {{end}}
+    </ul>{{end}}

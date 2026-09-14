@@ -531,9 +531,13 @@ All text must pass WCAG AA contrast.
 
 - One page at `/status`. Shows only monitors with **Show on status page** on.
 - Content: brand logo and name, overall status banner, one row per monitor with name and 90-day uptime bar, incidents from the last 14 days.
-- Target URLs and hosts are never shown on the public page.
+- Groups: each group shows as a quiet heading with its public monitors below it, in the group order of the dashboard. A group heading shows only when at least one monitor of the group is public. A group with no public monitors is not on the page at all, name included.
+- Public monitors in no group go below all the groups, with no heading.
+- The DOWN strip of the dashboard does not apply here. Groups keep their order, and a DOWN monitor stays in its group.
+- A group has no setting of its own. The **Show on status page** switch of each monitor decides what shows.
+- Target URLs and hosts are never shown on the public page. A group name shows as plain, escaped text.
 - Custom domain: the user points a domain at vexil through a reverse proxy. The README shows Caddy and nginx examples.
-- The page updates itself every 60 seconds (no SSE for the public). A small script fetches the page and replaces only the status content in place: no reload, no focus change. It pauses while the tab is hidden.
+- The page updates itself every 60 seconds (no SSE for the public). A small script fetches the page and replaces only the status content in place, group headings included, so a group appears or disappears with its public monitors: no reload, no focus change. It pauses while the tab is hidden.
 - The tab title count and the favicon (see 9.6) count only the public monitors. A private monitor that is down never turns them red. The 60-second refresh updates both with the status content.
 
 ---

@@ -20,8 +20,17 @@ const incidentWindow = 14 * 24 * time.Hour
 type statusContent struct {
 	Headline  string
 	State     string
-	Rows      []statusRow
+	Monitors  int           // the number of public monitors
+	Groups    []statusGroup // the groups with a public monitor, in dashboard order
+	Ungrouped []statusRow   // the public monitors in no group, below the groups
 	Incidents []statusIncident
+}
+
+// statusGroup is a group heading with its public monitors. The name is the
+// only thing the page shows about a group.
+type statusGroup struct {
+	Name string
+	Rows []statusRow
 }
 
 type statusRow struct {
@@ -50,8 +59,18 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
+	groups, err := s.store.Groups(ctx)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	known := make(map[int64]bool, len(groups))
+	for _, g := range groups {
+		known[g.ID] = true
+	}
 	now := time.Now()
 	var c statusContent
+	rows := map[int64][]statusRow{} // public rows by group id, 0 for no group
 	var down, pending, active int
 	for _, m := range monitors {
 		if !m.Public {
@@ -74,10 +93,24 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		row.Uptime, row.UptimePct = uptimeBar(days)
-		c.Rows = append(c.Rows, row)
+		group := m.GroupID
+		if !known[group] {
+			group = 0
+		}
+		rows[group] = append(rows[group], row)
+		c.Monitors++
 	}
+	// Groups keep the dashboard order, and a DOWN monitor stays in its
+	// group: the page is a calm summary. A group without a public monitor
+	// is left out, so its name never shows.
+	for _, g := range groups {
+		if len(rows[g.ID]) > 0 {
+			c.Groups = append(c.Groups, statusGroup{Name: g.Name, Rows: rows[g.ID]})
+		}
+	}
+	c.Ungrouped = rows[0]
 	c.Headline, c.State = headline(down, pending, active)
-	if len(c.Rows) == 0 {
+	if c.Monitors == 0 {
 		c.Headline, c.State = "Nothing to show yet", "pending"
 	}
 	incidents, err := s.store.RecentIncidents(ctx, now.Add(-incidentWindow), true)
