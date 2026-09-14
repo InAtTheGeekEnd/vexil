@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"io/fs"
 	"log/slog"
+	"mime"
 	"net"
 	"net/http"
 	"strings"
@@ -300,7 +301,36 @@ func (s *Server) handleSetupForm(w http.ResponseWriter, r *http.Request) {
 	s.render(w, http.StatusOK, "setup.html", pageData{})
 }
 
+// maxAuthForm is the body limit of the login and setup forms. They carry
+// one or two passwords.
+const maxAuthForm = 8 << 10
+
+// parseAuthForm reads the small URL-encoded body of a form that needs no
+// login. It refuses any other content type, multipart included, before it
+// reads the body, so an anonymous client cannot stream an upload to a temp
+// file.
+func parseAuthForm(w http.ResponseWriter, r *http.Request) bool {
+	if mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt != "application/x-www-form-urlencoded" {
+		http.Error(w, "send the form as application/x-www-form-urlencoded", http.StatusUnsupportedMediaType)
+		return false
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxAuthForm)
+	if err := r.ParseForm(); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			http.Error(w, "the form is too large", http.StatusRequestEntityTooLarge)
+		} else {
+			http.Error(w, "the form could not be read", http.StatusBadRequest)
+		}
+		return false
+	}
+	return true
+}
+
 func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
+	if !parseAuthForm(w, r) {
+		return
+	}
 	has, err := s.store.HasPassword(r.Context())
 	if err != nil {
 		s.serverError(w, err)
@@ -351,6 +381,9 @@ func (s *Server) handleLoginForm(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if !parseAuthForm(w, r) {
+		return
+	}
 	hash, err := s.store.PasswordHash(r.Context())
 	if errors.Is(err, store.ErrNotFound) {
 		http.Redirect(w, r, "/setup", http.StatusFound)

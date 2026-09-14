@@ -1,11 +1,13 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"io/fs"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -407,6 +409,103 @@ func TestLoginRateLimit(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("other IP: status %d, want 401", rec.Code)
 	}
+}
+
+// TestAuthFormsRefuseLargeBodies posts bodies that are not a small
+// URL-encoded form to the two forms that need no login. A multipart upload
+// must be refused before its body is read, so no temp file is written.
+func TestAuthFormsRefuseLargeBodies(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	// More than the 32 MB that ParseMultipartForm keeps in memory.
+	const fileSize = 40 << 20
+	upload := func() (io.Reader, string) {
+		var head bytes.Buffer
+		mw := multipart.NewWriter(&head)
+		if err := mw.WriteField("password", testPassword); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := mw.CreateFormFile("file", "big.bin"); err != nil {
+			t.Fatal(err)
+		}
+		tail := strings.NewReader("\r\n--" + mw.Boundary() + "--\r\n")
+		return io.MultiReader(&head, io.LimitReader(zeros{}, fileSize), tail), mw.FormDataContentType()
+	}
+	bigForm := func() (io.Reader, string) {
+		return strings.NewReader("password=" + strings.Repeat("a", 100<<10)), "application/x-www-form-urlencoded"
+	}
+	tests := []struct {
+		name     string
+		path     string
+		body     func() (io.Reader, string)
+		wantCode int
+		wantRead bool // the handler may read the body
+	}{
+		{"multipart login", "/login", upload, http.StatusUnsupportedMediaType, false},
+		{"multipart setup", "/setup", upload, http.StatusUnsupportedMediaType, false},
+		{"large form login", "/login", bigForm, http.StatusRequestEntityTooLarge, true},
+		{"large form setup", "/setup", bigForm, http.StatusRequestEntityTooLarge, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, st := newTestServer(t, Options{})
+			if tt.path == "/login" {
+				setPassword(t, st)
+			}
+			r, ctype := tt.body()
+			body := &countingReader{r: r}
+			req := httptest.NewRequest(http.MethodPost, tt.path, body)
+			req.Header.Set("Content-Type", ctype)
+			req.RemoteAddr = "203.0.113.7:1234"
+			rec := httptest.NewRecorder()
+			s.ServeHTTP(rec, req)
+			if rec.Code != tt.wantCode {
+				t.Fatalf("status = %d, want %d", rec.Code, tt.wantCode)
+			}
+			if !tt.wantRead && body.n > 0 {
+				t.Errorf("the handler read %d bytes of the body, want none", body.n)
+			}
+			entries, err := os.ReadDir(tmp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, e := range entries {
+				if strings.HasPrefix(e.Name(), "multipart-") {
+					t.Errorf("temp file %s was written", e.Name())
+				}
+			}
+		})
+	}
+	// Setup still accepts its own form after the refused requests.
+	s, _ := newTestServer(t, Options{})
+	form := url.Values{"password": {testPassword}, "confirm": {testPassword}}
+	req := httptest.NewRequest(http.MethodPost, "/setup", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("setup with a charset parameter = %d, want 303", rec.Code)
+	}
+}
+
+// zeros reads as an endless run of zero bytes.
+type zeros struct{}
+
+func (zeros) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
+}
+
+// countingReader counts the bytes read from r.
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
 }
 
 func TestNotFoundPage(t *testing.T) {

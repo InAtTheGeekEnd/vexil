@@ -127,6 +127,54 @@ func TestEventsStream(t *testing.T) {
 	s.CloseEvents() // a second call is harmless
 }
 
+// TestEventsOutliveWriteTimeout runs the stream on a server with a short
+// WriteTimeout, as vexil sets one. The stream clears its write deadline, so
+// heartbeats must keep arriving after the timeout.
+func TestEventsOutliveWriteTimeout(t *testing.T) {
+	old := sseHeartbeat
+	sseHeartbeat = 50 * time.Millisecond
+	t.Cleanup(func() { sseHeartbeat = old })
+
+	s, st := newTestServer(t, Options{})
+	setPassword(t, st)
+	token, hash, err := newSessionToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := st.CreateSession(context.Background(), hash, now, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	const writeTimeout = 200 * time.Millisecond
+	ts := httptest.NewUnstartedServer(s)
+	ts.Config.WriteTimeout = writeTimeout
+	ts.Start()
+	t.Cleanup(ts.Close)
+
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { res.Body.Close() })
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	r := bufio.NewReader(res.Body)
+	if line, _ := readEvent(t, r); line != "retry: 3000" {
+		t.Fatalf("first line = %q, want the retry hint", line)
+	}
+	for end := time.Now().Add(3 * writeTimeout); time.Now().Before(end); {
+		if line, _ := readEvent(t, r); !strings.HasPrefix(line, ":") {
+			t.Fatalf("line = %q, want a heartbeat comment", line)
+		}
+	}
+}
+
 func TestEventsNeedLogin(t *testing.T) {
 	s, st := newTestServer(t, Options{})
 	setPassword(t, st)

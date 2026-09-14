@@ -122,7 +122,13 @@ func serve(cfg config.Config, log *slog.Logger) error {
 		Addr:              cfg.Addr,
 		Handler:           srv,
 		ReadHeaderTimeout: 10 * time.Second,
-		IdleTimeout:       60 * time.Second,
+		// A whole request, body included, must arrive within a minute. The
+		// largest body is a logo upload.
+		ReadTimeout: time.Minute,
+		// A response must be written within a minute. The event stream
+		// clears its own write deadline.
+		WriteTimeout: time.Minute,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	// SSE streams are open requests. End them first so Shutdown does not

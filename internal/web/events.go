@@ -42,6 +42,9 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rc := http.NewResponseController(w)
+	// The WriteTimeout of the server would end the stream. The stream lasts
+	// as long as the client stays.
+	_ = rc.SetWriteDeadline(time.Time{})
 	events, unsubscribe := s.engine.Hub().Subscribe(64)
 	defer unsubscribe()
 
