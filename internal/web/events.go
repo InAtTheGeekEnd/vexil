@@ -69,6 +69,12 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		case <-s.closing:
 			return
 		case <-heartbeat.C:
+			// A session can end while its stream is open: a logout, a
+			// password change or the expiry. The stream ends with it, and
+			// the reconnect gets 401.
+			if ok, err := s.loggedIn(r); err != nil || !ok {
+				return
+			}
 			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
 				return
 			}

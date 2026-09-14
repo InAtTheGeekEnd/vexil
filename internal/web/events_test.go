@@ -175,6 +175,46 @@ func TestEventsOutliveWriteTimeout(t *testing.T) {
 	}
 }
 
+// TestEventsEndWhenSessionEnds opens a stream and then ends the session. The
+// stream must close at the next heartbeat.
+func TestEventsEndWhenSessionEnds(t *testing.T) {
+	old := sseHeartbeat
+	sseHeartbeat = 50 * time.Millisecond
+	t.Cleanup(func() { sseHeartbeat = old })
+
+	s, st := newTestServer(t, Options{})
+	ts, c := loggedIn(t, s, st)
+	res := get(t, c, ts.URL+"/events")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	r := bufio.NewReader(res.Body)
+	if line, _ := readEvent(t, r); line != "retry: 3000" {
+		t.Fatalf("first line = %q, want the retry hint", line)
+	}
+	if line, _ := readEvent(t, r); !strings.HasPrefix(line, ":") {
+		t.Fatalf("line = %q, want a heartbeat while the session is valid", line)
+	}
+
+	if err := st.DeleteAllSessions(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		for {
+			if _, err := r.ReadString('\n'); err != nil {
+				done <- err
+				return
+			}
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the stream is still open after the session ended")
+	}
+}
+
 func TestEventsNeedLogin(t *testing.T) {
 	s, st := newTestServer(t, Options{})
 	setPassword(t, st)
