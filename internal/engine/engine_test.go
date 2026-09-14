@@ -121,6 +121,9 @@ func newEnv(t *testing.T) *testEnv {
 	env.engine.retryDelay = 30 * testScale
 	env.engine.maxOffset = 60 * testScale
 	env.engine.pushMinExtra = 30 * testScale
+	// Some test checkers end only on cancellation, which Stop sends after
+	// its deadline.
+	env.engine.stopWait = 300 * time.Millisecond
 	env.engine.newChecker = func(m store.Monitor) (check.Checker, error) {
 		env.mu.Lock()
 		defer env.mu.Unlock()

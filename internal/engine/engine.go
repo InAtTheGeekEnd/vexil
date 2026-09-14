@@ -66,10 +66,11 @@ type Engine struct {
 	pushMinExtra time.Duration
 	stopWait     time.Duration // how long Stop waits for running checks
 
-	sem     chan struct{}
-	results chan result
-	stopCh  chan struct{}
-	done    chan struct{}
+	sem      chan struct{}
+	results  chan result
+	stopping chan struct{} // closed by Stop: runners start no new check
+	stopCh   chan struct{}
+	done     chan struct{}
 
 	reloadMu sync.Mutex // one Reload at a time
 	writeMu  sync.Mutex // the writer and DeleteMonitor take turns
@@ -100,6 +101,7 @@ func New(st *store.Store, opts Options) *Engine {
 		stopWait:     shutdownWait,
 		sem:          make(chan struct{}, maxConcurrent),
 		results:      make(chan result, 256),
+		stopping:     make(chan struct{}),
 		stopCh:       make(chan struct{}),
 		done:         make(chan struct{}),
 		runners:      make(map[int64]*runner),
@@ -167,7 +169,10 @@ func (e *Engine) Stop() {
 		return
 	}
 	e.stopped = true
-	e.cancel()
+	// Stop the schedules, but let a running check end and store its result
+	// (SPEC.md section 6.3). The contexts are cancelled only after the
+	// deadline.
+	close(e.stopping)
 	runners := make([]*runner, 0, len(e.runners))
 	for _, r := range e.runners {
 		runners = append(runners, r)
@@ -188,6 +193,7 @@ wait:
 			break wait
 		}
 	}
+	e.cancel()
 	close(e.stopCh)
 	<-e.done
 	e.log.Info("engine stopped")
@@ -400,6 +406,15 @@ func (e *Engine) run(ctx context.Context, m store.Monitor, r *runner, resumed bo
 		case <-timer.C:
 		case <-ctx.Done():
 			return
+		case <-e.stopping:
+			return
+		}
+		// The timer and a Stop can be ready at the same moment. A stopping
+		// engine starts no new check.
+		select {
+		case <-e.stopping:
+			return
+		default:
 		}
 		started := time.Now()
 		next := tick(ctx)
@@ -494,6 +509,8 @@ func (e *Engine) tickFunc(m store.Monitor, interval time.Duration, resumed bool)
 		select {
 		case e.sem <- struct{}{}:
 		case <-ctx.Done():
+			return 0
+		case <-e.stopping:
 			return 0
 		}
 		defer func() { <-e.sem }()
