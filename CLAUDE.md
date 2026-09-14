@@ -56,7 +56,8 @@ gofmt -l .                  # must print nothing
 - Milestone 2 (design system and `/styleguide`) comes before any feature UI. Match the tokens in section 10 exactly.
 - Each milestone ends with passing tests, `go vet`, `staticcheck` and `gofmt`.
 - Write table-driven tests. Use `httptest` for HTTP. Use temporary SQLite files for store tests.
-- Keep commits small. One logical change per commit. Use the imperative mood: "Add TCP checker".
+- Keep commits small. One logical change per commit.
+- Start every commit message with a prefix: `fix:`, `perf:`, `feat:`, `docs:`, `test:` or `chore:`. The release changelog groups commits by it. Use the imperative mood after the prefix: "feat: add TCP checker".
 - When you finish a task, give a short summary: what changed, how you tested it, what is still open.
 
 ## Code style
