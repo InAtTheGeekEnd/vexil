@@ -613,20 +613,38 @@ body.auth {
 .mon-strip .mon-handle { visibility: hidden; }
 
 /* The DOWN strip, then the groups in order, then the monitors in no group.
-   The group heading lines up its grip with the row grips and its name with
-   the status dots. */
-.dash, .dash-groups { display: flex; flex-direction: column; gap: 32px; }
-.dash-group { display: flex; flex-direction: column; gap: 8px; }
+   A group is one card: a header row with its grip and name, then its
+   monitors. The header grip lines up with the row grips and the name with
+   the status dots. A card without a header row holds the monitors in no
+   group. */
+.dash, .dash-groups { display: flex; flex-direction: column; gap: 24px; }
+.dash-group {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
 .group-head {
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr);
   align-items: center;
   gap: 16px;
-  min-height: 32px;
+  min-height: 48px;
+  padding-right: 20px;
+  border-bottom: 1px solid var(--border);
 }
 .group-head h2 { margin: 0; font-size: 16px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* An empty strip hides. An empty group shows a dashed place to drop a row.
-   The list of monitors in no group shows that place only during a row drag. */
+/* In a group card the list has no border of its own, and the first row has
+   square top corners under the header row. */
+.dash-group .monitors { border: 0; background: transparent; }
+.dash-group .mon-row:first-child { border-top-left-radius: 0; border-top-right-radius: 0; }
+@media (max-width: 640px) {
+  .group-head { padding-right: 16px; }
+}
+/* An empty strip hides. An empty group shows a dashed place to drop a row
+   inside its card. The list of monitors in no group shows that place only
+   during a row drag. */
 .mon-strip:not(:has(.mon-row)), .mon-ungrouped:not(:has(.mon-row)) { display: none; }
 .dash-group .monitors:not(:has(.mon-row)),
 .dash[data-drag="row"] .mon-ungrouped:not(:has(.mon-row)) {
@@ -635,12 +653,13 @@ body.auth {
   justify-content: center;
   min-height: 56px;
   padding: 12px 20px;
-  border-style: dashed;
+  border: 1px dashed var(--border);
   background: transparent;
   color: var(--muted);
   font-size: 12px;
   text-align: center;
 }
+.dash-group .monitors:not(:has(.mon-row)) { margin: 12px 20px; border-radius: var(--radius-sm); }
 .monitors:not(:has(.mon-row))::before { content: attr(data-empty); }
 .mon-row > .dot { grid-area: dot; }
 .mon-name { grid-area: name; display: flex; flex-direction: column; min-width: 0; }
@@ -1018,17 +1037,23 @@ img.brand-logo { object-fit: contain; }
 .status-head > .dot { flex-shrink: 0; }
 .status-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status-pct { margin-left: auto; flex-shrink: 0; white-space: nowrap; }
-/* Groups on the status page. The name is a quiet label that lines up with
-   the status dots, not a divider. */
+/* Groups on the status page. A group is one card: a header row with its
+   name, then its public monitors. A card without a header row holds the
+   monitors in no group. */
 .status-groups { display: flex; flex-direction: column; gap: 24px; }
-.status-group { display: flex; flex-direction: column; gap: 8px; }
+.status-group {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
 .status-group-name {
   margin: 0;
-  padding: 0 20px;
-  font-size: 12px;
+  padding: 14px 20px;
+  font-size: 14px;
   font-weight: 600;
-  color: var(--muted);
+  border-bottom: 1px solid var(--border);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.status-group .status-list { border: 0; background: transparent; }
