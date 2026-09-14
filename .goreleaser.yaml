@@ -40,5 +40,7 @@ changelog:
       - "^test"
 
 release:
+  # A tag with a pre-release suffix makes a pre-release on GitHub.
+  prerelease: auto
   footer: |
     Docker image: `ghcr.io/inatthegeekend/vexil:{{ .Version }}`
