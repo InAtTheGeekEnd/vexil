@@ -516,6 +516,20 @@ func parseMonitorForm(r *http.Request) monitorForm {
 	return f
 }
 
+// hostWithExtras is the form error for a host with a scheme, a port or a
+// path around it.
+const hostWithExtras = "Enter a host name or IP address, without http:// or a port."
+
+// bareHost reports whether s is only a host name or an IP address. A
+// scheme, a port, a path or brackets around it can never pass a check.
+// With ip false, only a name counts: an IPv6 address has colons.
+func bareHost(s string, ip bool) bool {
+	if ip && net.ParseIP(s) != nil {
+		return true
+	}
+	return !strings.ContainsAny(s, ":/[]@ ")
+}
+
 // validate fills f.Errors and returns the monitor to save. It fills an
 // empty name from the target.
 func (f *monitorForm) validate() store.Monitor {
@@ -538,6 +552,8 @@ func (f *monitorForm) validate() store.Monitor {
 		port, err := strconv.Atoi(f.Port)
 		if f.Host == "" {
 			f.Errors["host"] = "Enter a host name or IP address."
+		} else if !bareHost(f.Host, true) {
+			f.Errors["host"] = hostWithExtras
 		}
 		if f.Port == "" || err != nil || port < 1 || port > 65535 {
 			f.Errors["port"] = "Enter a number between 1 and 65535."
@@ -549,6 +565,8 @@ func (f *monitorForm) validate() store.Monitor {
 	case store.TypePing:
 		if f.Host == "" {
 			f.Errors["host"] = "Enter a host name or IP address."
+		} else if !bareHost(f.Host, true) {
+			f.Errors["host"] = hostWithExtras
 		} else {
 			m.Target = f.Host
 			f.fillName(f.Host)
@@ -556,6 +574,8 @@ func (f *monitorForm) validate() store.Monitor {
 	case store.TypeDNS:
 		if f.Hostname == "" {
 			f.Errors["hostname"] = "Enter a host name."
+		} else if !bareHost(f.Hostname, false) {
+			f.Errors["hostname"] = "Enter a host name, without http:// or a port."
 		} else {
 			m.Target = f.Hostname
 			f.fillName(f.Hostname)
