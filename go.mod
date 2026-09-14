@@ -3,6 +3,7 @@ module github.com/InAtTheGeekEnd/vexil
 go 1.27.1
 
 require (
+	github.com/prometheus-community/pro-bing v0.9.1
 	golang.org/x/crypto v0.57.0
 	golang.org/x/term v0.46.0
 	modernc.org/sqlite v1.58.0
@@ -13,7 +14,6 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
-	github.com/prometheus-community/pro-bing v0.9.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
