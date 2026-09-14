@@ -1,9 +1,12 @@
 """Seed a demo database for the README screenshots.
 
 Seven monitors, 30 days of raw checks plus 60 more days in the daily table,
-a handful of past incidents, and Postgres down right now. The Website
-monitor's last check is 61 s old so the engine checks it live at startup
-and fills the certificate tile. The other monitors are not due for 5 min.
+a handful of past incidents, and Postgres down right now. Five monitors are
+in two groups. Mail and Nightly backup are in no group, so the shots show
+the monitors below the groups. Each group has a public monitor, so its
+heading shows on the status page too. The Website monitor's last check is
+61 s old so the engine checks it live at startup and fills the certificate
+tile. The other monitors are not due for 5 min.
 """
 import base64, random, sqlite3, sys, time
 from datetime import datetime, timedelta
@@ -28,6 +31,12 @@ monitors = [
     ("Gateway", "ping", "203.0.113.1", 300, 0, 90, 9, 3, 5),
     ("Nightly backup", "push", "", 86400, 0, 90, None, None, 6 * 3600),
 ]
+# Groups in dashboard order, each with its monitors in order. The monitors
+# that are in no group keep the order of the list above.
+groups = [
+    ("Websites", ["Website", "API"]),
+    ("Infrastructure", ["Postgres", "DNS", "Gateway"]),
+]
 # monitor index, start, minutes, reason, status code, open
 incidents = [
     (0, now - 25 * 60, None, "connection refused", None),
@@ -41,15 +50,25 @@ incidents = [
 
 con = sqlite3.connect(db)
 con.execute("PRAGMA journal_mode=WAL")
-for t in ("monitors", "checks", "daily", "incidents"):
+for t in ("monitors", "monitor_groups", "checks", "daily", "incidents"):
     con.execute(f"DELETE FROM {t}")
 
+# Positions count from 1 inside each group, and from 1 among the monitors in
+# no group.
+group_of, position = {}, {}
+for gpos, (gname, members) in enumerate(groups, 1):
+    cur = con.execute("INSERT INTO monitor_groups (name, position, created_at) VALUES (?,?,?)", (gname, gpos, now - TOTAL_DAYS * DAY))
+    for i, name in enumerate(members, 1):
+        group_of[name], position[name] = cur.lastrowid, i
+for i, name in enumerate([m[0] for m in monitors if m[0] not in position], 1):
+    position[name] = i
+
 ids = []
-for pos, (name, typ, target, iv, pub, age, *_ ) in enumerate(monitors):
+for name, typ, target, iv, pub, age, *_ in monitors:
     token = base64.urlsafe_b64encode(random.randbytes(24)).decode().rstrip("=") if typ == "push" else None
     cur = con.execute(
-        "INSERT INTO monitors (name, type, target, push_token, interval_s, public, paused, position, created_at) VALUES (?,?,?,?,?,?,0,?,?)",
-        (name, typ, target, token, iv, pub, pos, now - age * DAY))
+        "INSERT INTO monitors (name, type, target, push_token, interval_s, public, paused, position, group_id, created_at) VALUES (?,?,?,?,?,?,0,?,?,?)",
+        (name, typ, target, token, iv, pub, position[name], group_of.get(name), now - age * DAY))
     ids.append(cur.lastrowid)
 
 def windows(mi):
