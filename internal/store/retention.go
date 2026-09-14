@@ -122,8 +122,9 @@ func (s *Store) deleteDay(ctx context.Context, monitorID int64, day time.Time, b
 	}
 }
 
-// RunRetention runs Retain at once and then every hour until ctx ends. The
-// returned channel closes when the job has stopped.
+// RunRetention deletes expired sessions and runs Retain, at once and then
+// every hour until ctx ends. The returned channel closes when the job has
+// stopped.
 func (s *Store) RunRetention(ctx context.Context, log *slog.Logger) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
@@ -131,6 +132,9 @@ func (s *Store) RunRetention(ctx context.Context, log *slog.Logger) <-chan struc
 		t := time.NewTicker(time.Hour)
 		defer t.Stop()
 		for {
+			if err := s.DeleteExpiredSessions(ctx, time.Now()); err != nil && ctx.Err() == nil {
+				log.Error("delete expired sessions", "err", err)
+			}
 			n, err := s.Retain(ctx, time.Now(), retentionBatch)
 			switch {
 			case ctx.Err() != nil:
