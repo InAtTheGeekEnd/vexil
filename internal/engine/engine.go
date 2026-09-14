@@ -398,8 +398,8 @@ func (e *Engine) run(ctx context.Context, m store.Monitor, r *runner, resumed bo
 
 // firstDelay is the wait before the first tick of a runner. It counts from
 // the last check in the status, which Start restores from the database, so
-// a restart does not reset the schedule. A monitor with no check yet gets a
-// random offset of at most maxOffset, or the interval if that is shorter.
+// a restart does not reset the schedule. A monitor with no check yet, or
+// with a check that is overdue, gets a random start offset.
 // A push monitor ticks at once: its tick computes the deadline itself.
 func (e *Engine) firstDelay(m store.Monitor, interval time.Duration) time.Duration {
 	if m.Type == store.TypePush {
@@ -414,17 +414,29 @@ func (e *Engine) firstDelay(m store.Monitor, interval time.Duration) time.Durati
 	}
 	e.mu.Unlock()
 	if last.IsZero() {
-		limit := min(e.maxOffset, interval)
-		if limit <= 0 {
-			return 0
-		}
-		return rand.N(limit)
+		return e.startOffset(interval)
 	}
 	wait := interval
 	if !ok {
 		wait = e.retryDelay
 	}
-	return max(0, time.Until(last.Add(wait)))
+	if d := time.Until(last.Add(wait)); d > 0 {
+		return d
+	}
+	// The check is overdue, as after a downtime longer than the interval.
+	// Without the offset, every overdue monitor would check in the same
+	// second and stay in step after that.
+	return e.startOffset(interval)
+}
+
+// startOffset is a random wait of at most maxOffset, or the interval if that
+// is shorter (SPEC.md section 6.3).
+func (e *Engine) startOffset(interval time.Duration) time.Duration {
+	limit := min(e.maxOffset, interval)
+	if limit <= 0 {
+		return 0
+	}
+	return rand.N(limit)
 }
 
 // pushGrace is how long a push monitor may go without a push: the interval

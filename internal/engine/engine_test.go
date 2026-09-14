@@ -783,7 +783,7 @@ func TestFirstDelay(t *testing.T) {
 		{"no check, long interval: offset up to 60s", time.Hour, time.Time{}, false, 0, 60 * time.Second},
 		{"no check, short interval: offset up to the interval", 30 * time.Second, time.Time{}, false, 0, 30 * time.Second},
 		{"ok check 10s ago, 1m interval", time.Minute, now.Add(-10 * time.Second), true, 50*time.Second - tol, 50 * time.Second},
-		{"ok check 2m ago, 1m interval: overdue", time.Minute, now.Add(-2 * time.Minute), true, 0, 0},
+		{"ok check 2m ago, 1m interval: overdue, offset up to 60s", time.Minute, now.Add(-2 * time.Minute), true, 0, 60 * time.Second},
 		{"failed check 10s ago: retry at 30s", time.Hour, now.Add(-10 * time.Second), false, 20*time.Second - tol, 20 * time.Second},
 	}
 	for i, tt := range tests {
@@ -832,7 +832,7 @@ func TestScheduleSurvivesRestart(t *testing.T) {
 			t.Fatalf("check ran at %v, want about %v", ev.At, want)
 		}
 	})
-	t.Run("http overdue runs at once", func(t *testing.T) {
+	t.Run("http overdue runs within the start offset", func(t *testing.T) {
 		env := newEnv(t)
 		m := &store.Monitor{Name: "m", Type: store.TypeHTTP, Target: "x", IntervalS: 1000} // 20s
 		if err := env.store.CreateMonitor(ctx, m); err != nil {
@@ -846,7 +846,7 @@ func TestScheduleSurvivesRestart(t *testing.T) {
 		if err := env.engine.Start(ctx); err != nil {
 			t.Fatal(err)
 		}
-		waitFor(t, events, 500*time.Millisecond, func(ev Event) bool { return ev.MonitorID == m.ID })
+		waitFor(t, events, env.engine.maxOffset+500*time.Millisecond, func(ev Event) bool { return ev.MonitorID == m.ID })
 	})
 	t.Run("push keeps its last push time", func(t *testing.T) {
 		env := newEnv(t)
