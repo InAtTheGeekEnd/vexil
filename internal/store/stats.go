@@ -167,39 +167,72 @@ type Bucket struct {
 	HasLatency bool  // false when no check in the bucket succeeded
 }
 
+// recentChecksQuery reads the checks of every monitor since a time. The IN
+// over the monitors lets SQLite search the covering index on (monitor_id,
+// at, ok, latency_ms), and the ORDER BY is the index order, so SQLite does
+// not sort.
+const recentChecksQuery = `
+	SELECT monitor_id, at, ok, latency_ms FROM checks
+	WHERE monitor_id IN (SELECT id FROM monitors) AND at >= ?
+	ORDER BY monitor_id, at`
+
 // RecentBuckets returns the checks of every monitor since a time, grouped
 // into buckets of the given size counted from the Unix epoch, oldest first,
 // by monitor id, in one query. A bucket of 30 minutes starts at a UTC
-// midnight, so the buckets from today's midnight on add up to today.
+// midnight, so the buckets from today's midnight on add up to today. The
+// rows come in order, so the buckets are built in one pass as they stream in.
 func (s *Store) RecentBuckets(ctx context.Context, since time.Time, bucket time.Duration) (map[int64][]Bucket, error) {
 	secs := int64(bucket / time.Second)
 	if secs <= 0 {
 		secs = 60
 	}
-	// The IN over the monitors lets SQLite use the index on (monitor_id, at)
-	// for the time range.
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT monitor_id, (at / ?) * ?, COUNT(*), SUM(ok), AVG(CASE WHEN ok = 1 THEN latency_ms END)
-		FROM checks
-		WHERE monitor_id IN (SELECT id FROM monitors) AND at >= ?
-		GROUP BY 1, 2 ORDER BY 1, 2`, secs, secs, since.Unix())
+	rows, err := s.db.QueryContext(ctx, recentChecksQuery, since.Unix())
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+
 	out := map[int64][]Bucket{}
+	var (
+		id, at, ok     int64
+		latency        sql.NullInt64
+		open           bool
+		curID, start   int64
+		cur            Bucket
+		latSum, latNum int64
+	)
+	flush := func() {
+		if !open {
+			return
+		}
+		if latNum > 0 {
+			cur.LatencyMS, cur.HasLatency = int64(float64(latSum)/float64(latNum)+0.5), true
+		}
+		out[curID] = append(out[curID], cur)
+	}
 	for rows.Next() {
-		var id, at int64
-		var b Bucket
-		var avg sql.NullFloat64
-		if err := rows.Scan(&id, &at, &b.Total, &b.OK, &avg); err != nil {
+		if err := rows.Scan(&id, &at, &ok, &latency); err != nil {
 			return nil, err
 		}
-		b.At = time.Unix(at, 0)
-		b.LatencyMS, b.HasLatency = int64(avg.Float64+0.5), avg.Valid
-		out[id] = append(out[id], b)
+		if b := at / secs * secs; !open || id != curID || b != start {
+			flush()
+			open, curID, start = true, id, b
+			cur, latSum, latNum = Bucket{At: time.Unix(b, 0)}, 0, 0
+		}
+		cur.Total++
+		if ok == 1 {
+			cur.OK++
+			if latency.Valid {
+				latSum += latency.Int64
+				latNum++
+			}
+		}
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	flush()
+	return out, nil
 }
 
 // LatencyPoint is the average latency of successful checks in one time bucket.
