@@ -277,6 +277,10 @@ func Validate(c store.Channel) map[string]string {
 			u, err := url.Parse(v)
 			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 				errs[f.Key] = "Enter a full URL that starts with http:// or https://."
+			} else if c.Type == store.ChannelNtfy && u.User != nil {
+				// ntfy would send the topic URL without them, and the
+				// channel list would show them.
+				errs[f.Key] = "Remove the user name and password from the URL. Put an access token in the token field."
 			}
 		case "email":
 			if _, err := mail.ParseAddress(v); err != nil {
@@ -317,7 +321,11 @@ func Summary(c store.Channel) string {
 	case store.ChannelTelegram:
 		return "Chat " + cfg["chat_id"]
 	case store.ChannelNtfy:
-		return strings.TrimPrefix(strings.TrimPrefix(cfg["url"], "https://"), "http://")
+		// The host and the topic, never a user name or password.
+		if u, err := url.Parse(cfg["url"]); err == nil && u.Host != "" {
+			return u.Host + u.Path
+		}
+		return "ntfy"
 	case store.ChannelPushover:
 		if cfg["repeat"] == "1" {
 			return "DOWN alerts repeat until acknowledged"
