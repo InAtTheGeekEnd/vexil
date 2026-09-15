@@ -28,7 +28,7 @@ func TestPushResumeRestartsTheDeadline(t *testing.T) {
 
 	setPaused := func(paused bool, want State) {
 		t.Helper()
-		if err := env.store.SetPaused(ctx, m.ID, paused); err != nil {
+		if err := env.store.SetPaused(ctx, m.ID, paused, time.Now()); err != nil {
 			t.Fatal(err)
 		}
 		if err := env.engine.Reload(ctx, m.ID); err != nil {

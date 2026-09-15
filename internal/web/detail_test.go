@@ -26,62 +26,58 @@ func addChecks(t *testing.T, st *store.Store, id int64, start time.Time, n, ok i
 	}
 }
 
-// TestDetailReadsRollups runs the job as it ran two hours ago, and Retain
-// for a day 50 days ago. Then checks go in behind the rows: failures on two
-// rolled days and slow successes in a rolled hour. The hour after the newest
-// hourly row has checks only. The 7, 30 and 90-day tiles must read the
-// daily rows, as the 90-day bar does. The 24-hour tiles must read the hourly
-// rows, and the hour after the newest row from its checks.
-func TestDetailReadsRollups(t *testing.T) {
+// TestDetailUptimeFromIncidents gives a monitor an incident in each tile
+// window, a pause of a day, and failed checks that opened no incident. The
+// tiles and the 90-day percentage must count the incident time against the
+// live time of their windows, and nothing else.
+func TestDetailUptimeFromIncidents(t *testing.T) {
 	s, st := newIdleServer(t, Options{})
 	ctx := context.Background()
-	m := &store.Monitor{Name: "Shop", Type: store.TypeHTTP, Target: "https://shop.example.com", IntervalS: 60}
+	now := time.Now()
+	m := &store.Monitor{Name: "Shop", Type: store.TypeHTTP, Target: "https://shop.example.com", IntervalS: 60, CreatedAt: now.AddDate(0, 0, -100)}
 	if err := st.CreateMonitor(ctx, m); err != nil {
 		t.Fatal(err)
 	}
-	now := time.Now()
-	current := now.UTC().Truncate(time.Hour)
-	today := now.UTC().Truncate(24 * time.Hour)
-	day := func(d int) time.Time { return today.AddDate(0, 0, d).Add(12 * time.Hour) }
-	addChecks(t, st, m.ID, day(-3), 10, 9, 100)
-	addChecks(t, st, m.ID, day(-2), 10, 9, 100)
-	addChecks(t, st, m.ID, day(-20), 10, 10, 100)
-	addChecks(t, st, m.ID, day(-50), 10, 5, 100)
-	addChecks(t, st, m.ID, current.Add(-3*time.Hour), 10, 10, 120)
-	if err := st.Rollup(ctx, now.Add(-2*time.Hour)); err != nil {
-		t.Fatal(err)
+	h := func(n int) time.Duration { return time.Duration(n) * time.Hour }
+	for _, inc := range []struct{ start, length int }{{4, 3}, {5 * 24, 12}, {20 * 24, 24}, {60 * 24, 48}} {
+		if _, err := st.OpenIncident(ctx, m.ID, now.Add(-h(inc.start)), "HTTP 503"); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.CloseIncident(ctx, m.ID, now.Add(-h(inc.start)+h(inc.length))); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if _, err := st.Retain(ctx, now, 500); err != nil {
-		t.Fatal(err)
+	for _, step := range []struct {
+		paused bool
+		ago    int
+	}{{true, 10 * 24}, {false, 9 * 24}} {
+		if err := st.SetPaused(ctx, m.ID, step.paused, now.Add(-h(step.ago))); err != nil {
+			t.Fatal(err)
+		}
 	}
-	addChecks(t, st, m.ID, day(-3).Add(time.Hour), 10, 0, 0)
-	addChecks(t, st, m.ID, day(-2).Add(time.Hour), 10, 0, 0)
-	addChecks(t, st, m.ID, current.Add(-3*time.Hour+30*time.Minute), 10, 10, 999)
-	addChecks(t, st, m.ID, current.Add(-time.Hour+time.Minute), 10, 5, 300)
+	addChecks(t, st, m.ID, now.Add(-30*time.Minute), 10, 0, 0)
 
 	ts, c := loggedIn(t, s, st)
 	b := body(t, get(t, c, ts.URL+"/monitors/"+strconv.FormatInt(m.ID, 10)))
-	tile := func(label, value, unit string) string {
-		return `<span class="label">` + label + `</span><span class="value">` + value + `<small>` + unit + `</small>`
+	tile := func(label string, down, live int) string {
+		return `<span class="label">` + label + `</span><span class="value">` + formatPercent(float64(live-down)*100/float64(live)) + `<small>%</small>`
 	}
 	tests := []struct {
 		name, want string
 	}{
-		// The rolled hour, 10 of 10, and the hour after it, 5 of 10.
-		{"24-hour uptime from the hours", tile("Uptime · 24 h", formatPercent(75), "%")},
-		// (10 x 120 + 5 x 300) / 15 = 180 ms.
-		{"average response from the hours", tile("Avg response", "180", "ms")},
-		// Days -3 and -2, 18 of 20, and the two hours, 15 of 20.
-		{"7-day uptime from the daily rows", tile("Uptime · 7 d", formatPercent(82.5), "%")},
-		// Day -20 adds 10 of 10.
-		{"30-day uptime from the daily rows", tile("Uptime · 30 d", formatPercent(float64(43)*100/50), "%")},
-		// Day -50, rolled up by Retain, adds 5 of 10.
-		{"90-day uptime from the daily rows", tile("Uptime · 90 d", formatPercent(80), "%")},
+		{"24 h counts the 3-hour incident", tile("Uptime · 24 h", 3, 24)},
+		{"7 d adds the 12-hour incident", tile("Uptime · 7 d", 15, 7*24)},
+		{"30 d adds a day of incident and leaves out the paused day", tile("Uptime · 30 d", 39, 29*24)},
+		{"90 d adds the 2-day incident", tile("Uptime · 90 d", 87, 89*24)},
+		{"the bar percentage is the 90-day one", formatPercent(float64(89*24-87)*100/float64(89*24)) + "% over 90 days"},
 	}
 	for _, tc := range tests {
 		if !strings.Contains(b, tc.want) {
 			t.Errorf("%s: detail page lacks %q", tc.name, tc.want)
 		}
+	}
+	if !strings.Contains(b, `>Incidents</`) || strings.Count(b, "HTTP 503") < 4 {
+		t.Error("detail page lacks the incident list")
 	}
 }
 
@@ -147,11 +143,11 @@ func TestMonitorDetailPage(t *testing.T) {
 	// before the test reads it.
 	s, st := newIdleServer(t, Options{})
 	ctx := context.Background()
-	m := &store.Monitor{Name: "Shop", Type: store.TypeHTTP, Target: "https://shop.example.com", IntervalS: 60}
+	now := time.Now()
+	m := &store.Monitor{Name: "Shop", Type: store.TypeHTTP, Target: "https://shop.example.com", IntervalS: 60, CreatedAt: now.AddDate(0, 0, -2)}
 	if err := st.CreateMonitor(ctx, m); err != nil {
 		t.Fatal(err)
 	}
-	now := time.Now()
 	// Two days of checks: all fine, then an incident of ten minutes, then fine.
 	for i := 48 * 60; i > 0; i -= 5 {
 		at := now.Add(-time.Duration(i) * time.Minute)
@@ -214,10 +210,14 @@ func TestMonitorDetailEmpty(t *testing.T) {
 	}
 	ts, c := loggedIn(t, s, st)
 	b := body(t, get(t, c, ts.URL+"/monitors/"+strconv.FormatInt(m.ID, 10)))
-	for _, want := range []string{"No data", "Not enough data yet", "No incidents yet", "No data yet"} {
+	// A new monitor has no incident, so its uptime is 100 from the start.
+	for _, want := range []string{"No data", "Not enough data yet", "No incidents yet", "100% over 90 days", `<span class="label">Uptime · 24 h</span><span class="value">100<small>%</small>`} {
 		if !strings.Contains(b, want) {
 			t.Errorf("empty detail page lacks %q", want)
 		}
+	}
+	if strings.Contains(b, "No data yet") {
+		t.Error("empty detail page says the uptime has no data")
 	}
 	if strings.Contains(b, "Certificate") {
 		t.Error("TCP monitor shows a certificate tile")

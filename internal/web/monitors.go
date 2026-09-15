@@ -98,35 +98,21 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now()
 	// Three queries for all monitors, not a few per monitor (SPEC.md section
-	// 14: less than 50 ms). The bar and the percent read the daily rows of the
-	// days before today. Today and the sparkline come from the last 24 hours:
-	// the hourly rows, and the hours after them from the checks.
-	today := now.UTC().Truncate(24 * time.Hour)
-	first := today.AddDate(0, 0, -29)
-	daily, err := s.store.DailyTotals(ctx, first, today.AddDate(0, 0, -1))
+	// 14: less than 50 ms). The bar and the percent come from the incidents
+	// and pauses of the last 30 days. The sparkline comes from the last 24
+	// hours: the hourly rows, and the hours after them from the checks.
+	first := now.UTC().Truncate(24*time.Hour).AddDate(0, 0, -29)
+	since := now.Add(-30 * 24 * time.Hour)
+	recent, err := s.store.RecentIncidents(ctx, since, false)
 	if err != nil {
 		s.serverError(w, err)
 		return
 	}
-	// A day in the window without any daily row is not rolled up yet, as
-	// yesterday is until the job runs just after midnight. Count those days
-	// from the checks, in one more query for all monitors.
-	if missing := missingDays(first, today, daily); len(missing) > 0 {
-		counted, err := s.store.DailyFromChecks(ctx, missing)
-		if err != nil {
-			s.serverError(w, err)
-			return
-		}
-		for id, byDay := range counted {
-			if daily[id] == nil {
-				daily[id] = map[string]store.DayTotals{}
-			}
-			for day, t := range byDay {
-				daily[id][day] = t
-			}
-		}
+	incidents := map[int64][]store.Incident{}
+	for _, inc := range recent {
+		incidents[inc.MonitorID] = append(incidents[inc.MonitorID], inc.Incident)
 	}
-	incidents, err := s.store.IncidentDays(ctx, first)
+	pauses, err := s.store.PausesSince(ctx, since)
 	if err != nil {
 		s.serverError(w, err)
 		return
@@ -167,7 +153,8 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		if !m.Paused {
 			active++
 		}
-		row.Uptime, row.UptimePct = uptimeBar(dashboardDays(first, today, daily[m.ID], incidents[m.ID], hours[m.ID]))
+		row.Uptime = uptimeDays(first, now, m, incidents[m.ID], pauses[m.ID])
+		row.UptimePct = percentText(uptime(since, now, m, incidents[m.ID], pauses[m.ID]))
 		var values []float64
 		for _, h := range hours[m.ID] {
 			if h.HasLatency {
@@ -214,61 +201,6 @@ func headline(down, pending, active int) (string, string) {
 		return "Waiting for the first checks", "pending"
 	}
 	return "All systems operational", "up"
-}
-
-// missingDays returns the days from first to the day before today that no
-// monitor has a daily row for. The job writes the rows of a day for all
-// monitors in one statement, so a day that one monitor has is complete.
-func missingDays(first, today time.Time, daily map[int64]map[string]store.DayTotals) []time.Time {
-	have := map[string]bool{}
-	for _, byDay := range daily {
-		for day := range byDay {
-			have[day] = true
-		}
-	}
-	var out []time.Time
-	for d := first; d.Before(today); d = d.AddDate(0, 0, 1) {
-		if !have[d.Format("2006-01-02")] {
-			out = append(out, d)
-		}
-	}
-	return out
-}
-
-// dashboardDays builds the 30 days of the uptime bar of one monitor: the
-// days before today from its daily rows, and today from its hours of the
-// last 24 hours.
-func dashboardDays(first, today time.Time, daily map[string]store.DayTotals, incidents map[string]int, hours []store.Bucket) []store.DayStat {
-	var days []store.DayStat
-	for d := first; d.Before(today); d = d.AddDate(0, 0, 1) {
-		key := d.Format("2006-01-02")
-		t := daily[key]
-		days = append(days, store.DayStat{Day: key, Total: t.Total, OK: t.OK, Incidents: incidents[key]})
-	}
-	key := today.Format("2006-01-02")
-	current := store.DayStat{Day: key, Incidents: incidents[key]}
-	for _, h := range hours {
-		if !h.At.Before(today) {
-			current.Total += h.Total
-			current.OK += h.OK
-		}
-	}
-	return append(days, current)
-}
-
-// uptimeBar turns 30 day stats into bar segments and a 30-day percentage.
-func uptimeBar(days []store.DayStat) ([]uptimeDay, string) {
-	out := make([]uptimeDay, len(days))
-	var total, ok int
-	for i, d := range days {
-		out[i] = uptimeDay{Day: d.Day, Percent: d.Percent(), Incidents: d.Incidents, HasData: d.Total > 0}
-		total += d.Total
-		ok += d.OK
-	}
-	if total == 0 {
-		return out, ""
-	}
-	return out, formatPercent(float64(ok) * 100 / float64(total))
 }
 
 // monitorStatus returns the live status, or PAUSED / PENDING when the engine
@@ -416,7 +348,7 @@ func (s *Server) setPaused(w http.ResponseWriter, r *http.Request, paused bool) 
 	if !ok {
 		return
 	}
-	if err := s.store.SetPaused(r.Context(), m.ID, paused); err != nil {
+	if err := s.store.SetPaused(r.Context(), m.ID, paused, time.Now()); err != nil {
 		s.serverError(w, err)
 		return
 	}

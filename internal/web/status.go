@@ -69,6 +69,24 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		known[g.ID] = true
 	}
 	now := time.Now()
+	// The bars and the percentages come from the incidents and pauses of
+	// the last 90 days, in two queries for all monitors.
+	since := now.Add(-90 * 24 * time.Hour)
+	recent, err := s.store.RecentIncidents(ctx, since, true)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	incidents := map[int64][]store.Incident{}
+	for _, inc := range recent {
+		incidents[inc.MonitorID] = append(incidents[inc.MonitorID], inc.Incident)
+	}
+	pauses, err := s.store.PausesSince(ctx, since)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	first := now.UTC().Truncate(24*time.Hour).AddDate(0, 0, -89)
 	var c statusContent
 	rows := map[int64][]statusRow{} // public rows by group id, 0 for no group
 	var down, pending, active int
@@ -87,12 +105,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		if !m.Paused {
 			active++
 		}
-		days, err := s.store.DailyStats(ctx, m.ID, now.AddDate(0, 0, -89), now)
-		if err != nil {
-			s.serverError(w, err)
-			return
-		}
-		row.Uptime, row.UptimePct = uptimeBar(days)
+		row.Uptime = uptimeDays(first, now, m, incidents[m.ID], pauses[m.ID])
+		row.UptimePct = percentText(uptime(since, now, m, incidents[m.ID], pauses[m.ID]))
 		group := m.GroupID
 		if !known[group] {
 			group = 0
@@ -113,12 +127,12 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if c.Monitors == 0 {
 		c.Headline, c.State = "Nothing to show yet", "pending"
 	}
-	incidents, err := s.store.RecentIncidents(ctx, now.Add(-incidentWindow), true)
-	if err != nil {
-		s.serverError(w, err)
-		return
-	}
-	for _, inc := range incidents {
+	// The list shows the incidents of the last 14 days: those of the 90
+	// days above that were still open at the start of the window.
+	for _, inc := range recent {
+		if !inc.Open() && inc.EndedAt.Before(now.Add(-incidentWindow)) {
+			continue
+		}
 		row := incidentRows([]store.Incident{inc.Incident}, now)[0]
 		c.Incidents = append(c.Incidents, statusIncident{Monitor: inc.MonitorName, Start: row.Start, Duration: row.Duration, Reason: row.Reason, Open: row.Open})
 	}

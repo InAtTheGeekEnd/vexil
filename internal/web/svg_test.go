@@ -87,6 +87,10 @@ func TestUptimeDay(t *testing.T) {
 		{uptimeDay{Day: "2026-09-03", Percent: 99.95, Incidents: 1, HasData: true}, "seg-warn", "2026-09-03\n99.95% uptime · 1 incident"},
 		{uptimeDay{Day: "2026-09-04", Percent: 95, Incidents: 2, HasData: true}, "seg-warn", "2026-09-04\n95% uptime · 2 incidents"},
 		{uptimeDay{Day: "2026-09-05", Percent: 94.99, Incidents: 3, HasData: true}, "seg-down", "2026-09-05\n94.99% uptime · 3 incidents"},
+		// A second of incident in a day: not green, and not shown as 100.
+		{uptimeDay{Day: "2026-09-06", Percent: float64(86399) * 100 / 86400, Incidents: 1, HasData: true}, "seg-warn", "2026-09-06\n99.99% uptime · 1 incident"},
+		{uptimeDay{Day: "2026-09-07", Percent: 94.999, Incidents: 1, HasData: true}, "seg-down", "2026-09-07\n94.99% uptime · 1 incident"},
+		{uptimeDay{Day: "2026-09-08", Percent: 100, Incidents: 1, HasData: true}, "seg-up", "2026-09-08\n100% uptime · 1 incident"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.day.Day, func(t *testing.T) {

@@ -102,7 +102,12 @@ func (s *Store) CreateMonitor(ctx context.Context, m *Monitor) error {
 	if err != nil {
 		return err
 	}
-	m.ID, err = res.LastInsertId()
+	if m.ID, err = res.LastInsertId(); err != nil {
+		return err
+	}
+	if m.Paused {
+		_, err = s.db.ExecContext(ctx, `INSERT INTO pauses (monitor_id, started_at) VALUES (?, ?)`, m.ID, m.CreatedAt.Unix())
+	}
 	return err
 }
 
@@ -112,15 +117,6 @@ func (s *Store) UpdateMonitor(ctx context.Context, m Monitor) error {
 		name = ?, type = ?, target = ?, keyword = ?, expected_ip = ?, interval_s = ?, public = ?, paused = ?
 		WHERE id = ?`,
 		m.Name, m.Type, m.Target, nullIfEmpty(m.Keyword), nullIfEmpty(m.ExpectedIP), m.IntervalS, m.Public, m.Paused, m.ID)
-	if err != nil {
-		return err
-	}
-	return affected(res)
-}
-
-// SetPaused pauses or resumes a monitor.
-func (s *Store) SetPaused(ctx context.Context, id int64, paused bool) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE monitors SET paused = ? WHERE id = ?`, paused, id)
 	if err != nil {
 		return err
 	}

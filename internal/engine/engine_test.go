@@ -314,7 +314,7 @@ func TestPauseResumeDelete(t *testing.T) {
 	waitFor(t, events, 2*time.Second, func(ev Event) bool { return ev.State == Up })
 
 	// Any state to PAUSED: user action, no alert.
-	if err := env.store.SetPaused(ctx, m.ID, true); err != nil {
+	if err := env.store.SetPaused(ctx, m.ID, true, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if err := env.engine.Reload(ctx, m.ID); err != nil {
@@ -341,7 +341,7 @@ func TestPauseResumeDelete(t *testing.T) {
 	// Resume: PAUSED to PENDING, then UP on the first success. The first
 	// check starts inside Reload and can finish before Status is read, so
 	// the events, not the live status, prove the order.
-	if err := env.store.SetPaused(ctx, m.ID, false); err != nil {
+	if err := env.store.SetPaused(ctx, m.ID, false, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if err := env.engine.Reload(ctx, m.ID); err != nil {
@@ -422,7 +422,7 @@ func TestResumeWithOpenIncident(t *testing.T) {
 
 			setPaused := func(paused bool, want State) {
 				t.Helper()
-				if err := env.store.SetPaused(ctx, m.ID, paused); err != nil {
+				if err := env.store.SetPaused(ctx, m.ID, paused, time.Now()); err != nil {
 					t.Fatal(err)
 				}
 				if err := env.engine.Reload(ctx, m.ID); err != nil {

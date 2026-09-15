@@ -86,13 +86,20 @@ func (s *Server) handleMonitor(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
-	days, err := s.store.DailyStats(ctx, m.ID, now.AddDate(0, 0, -89), now)
+	// The uptime comes from the incidents and pauses of the last 90 days.
+	since := now.Add(-90 * 24 * time.Hour)
+	window, err := s.store.IncidentsSince(ctx, m.ID, since)
 	if err != nil {
 		s.serverError(w, err)
 		return
 	}
-	// The 24-hour tiles read 23 finished hours and the current hour, as the
-	// dashboard sparkline does.
+	pauses, err := s.store.MonitorPauses(ctx, m.ID, since)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	// The response tile reads 23 finished hours and the current hour, as
+	// the dashboard sparkline does.
 	day, err := s.store.Summary(ctx, m.ID, now.UTC().Truncate(time.Hour).Add(-23*time.Hour))
 	if err != nil {
 		s.serverError(w, err)
@@ -108,12 +115,14 @@ func (s *Server) handleMonitor(w http.ResponseWriter, r *http.Request) {
 		StateLabel: stateLabel(st.State),
 		Since:      sinceLine(m, st, incidents, now),
 		Kind:       kind(m),
-		Tiles:      tiles(m, st, day, days, now),
+		Tiles:      tiles(m, st, day, window, pauses, now),
 		Incidents:  incidentRows(incidents, now),
 	}
 	c.LastHead, c.LastAt = lastParts(m, st)
 	c.LastLine = lastLine(m, st, now)
-	c.Uptime, c.UptimePct = uptimeBar(days)
+	today := now.UTC().Truncate(24 * time.Hour)
+	c.Uptime = uptimeDays(today.AddDate(0, 0, -89), now, m, window, pauses)
+	c.UptimePct = percentText(uptime(since, now, m, window, pauses))
 	if m.Public {
 		c.BadgeURL = s.absoluteURL(r, fmt.Sprintf("/badge/%d.svg", m.ID))
 	}
@@ -159,29 +168,25 @@ func (s *Server) charts(r *http.Request, id int64, now time.Time) ([]chartRange,
 	return out, nil
 }
 
-// tiles builds the stat tiles: uptime for 24 h, 7 d, 30 d and 90 d, the
-// average response time, and the certificate expiry for HTTPS monitors.
-func tiles(m store.Monitor, st engine.Status, day store.Summary, days []store.DayStat, now time.Time) []statTile {
-	pct := func(p float64, ok bool) statTile {
-		if !ok {
-			return statTile{}
+// tiles builds the stat tiles: uptime for 24 h, 7 d, 30 d and 90 d from the
+// incidents and pauses, the average response time, and the certificate
+// expiry for HTTPS monitors.
+func tiles(m store.Monitor, st engine.Status, day store.Summary, incidents []store.Incident, pauses []store.Pause, now time.Time) []statTile {
+	var out []statTile
+	for _, w := range []struct {
+		label string
+		back  time.Duration
+	}{
+		{"Uptime · 24 h", 24 * time.Hour},
+		{"Uptime · 7 d", 7 * 24 * time.Hour},
+		{"Uptime · 30 d", 30 * 24 * time.Hour},
+		{"Uptime · 90 d", 90 * 24 * time.Hour},
+	} {
+		t := statTile{Label: w.label}
+		if p, ok := uptime(now.Add(-w.back), now, m, incidents, pauses); ok {
+			t.Value, t.Unit = formatPercent(p), "%"
 		}
-		return statTile{Value: formatPercent(p), Unit: "%"}
-	}
-	last := func(n int) []store.DayStat {
-		if n > len(days) {
-			n = len(days)
-		}
-		return days[len(days)-n:]
-	}
-	out := []statTile{
-		pct(day.Percent()),
-		pct(daysPercent(last(7))),
-		pct(daysPercent(last(30))),
-		pct(daysPercent(days)),
-	}
-	for i, label := range []string{"Uptime · 24 h", "Uptime · 7 d", "Uptime · 30 d", "Uptime · 90 d"} {
-		out[i].Label = label
+		out = append(out, t)
 	}
 	if m.Type != store.TypePush {
 		t := statTile{Label: "Avg response"}
@@ -206,19 +211,6 @@ func tiles(m store.Monitor, st engine.Status, day store.Summary, days []store.Da
 		out = append(out, t)
 	}
 	return out
-}
-
-// daysPercent sums day stats into one uptime percentage.
-func daysPercent(days []store.DayStat) (float64, bool) {
-	var total, ok int
-	for _, d := range days {
-		total += d.Total
-		ok += d.OK
-	}
-	if total == 0 {
-		return 0, false
-	}
-	return float64(ok) * 100 / float64(total), true
 }
 
 // sinceLine is the "Up for 14 days" or "Down for 6 minutes" line. It is

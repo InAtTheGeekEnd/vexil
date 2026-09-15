@@ -52,7 +52,7 @@ func TestMonitorCRUD(t *testing.T) {
 	if got.Name != "Site 2" || got.Keyword != "" || !got.Paused {
 		t.Fatalf("after update: %+v", got)
 	}
-	if err := s.SetPaused(ctx, m.ID, false); err != nil {
+	if err := s.SetPaused(ctx, m.ID, false, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ = s.Monitor(ctx, m.ID); got.Paused {
