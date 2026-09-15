@@ -1,8 +1,8 @@
 """Seed a demo database for the README screenshots.
 
-Seven monitors, 30 days of raw checks, a handful of past incidents, and Postgres down right now. Five monitors are
-in two groups. Mail and Nightly backup are in no group, so the shots show
-the monitors below the groups. Each group has a public monitor, so its
+Seven monitors, 30 days of raw checks, a handful of past incidents, and
+Postgres down right now. Five monitors are in two groups. Mail and Nightly
+backup are in no group, so the shots show the monitors below the groups. Each group has a public monitor, so its
 heading shows on the status page too. The Website monitor's last check is
 61 s old so the engine checks it live at startup and fills the certificate
 tile. The other monitors are not due for 5 min.
