@@ -512,7 +512,7 @@ func TestTest(t *testing.T) {
 func TestBrandNameComesFromSettings(t *testing.T) {
 	s, st, _ := newTestService(t)
 	ts, cap := newCapture(t)
-	if err := st.SetSetting(context.Background(), store.SettingBrandName, "Northwind Status"); err != nil {
+	if err := st.SetSettings(context.Background(), map[string]string{store.SettingBrandName: "Northwind Status"}); err != nil {
 		t.Fatal(err)
 	}
 	c := store.Channel{Type: store.ChannelSlack, Config: map[string]string{"url": ts.URL + "/services/SECRET"}}

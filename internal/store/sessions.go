@@ -36,12 +36,6 @@ func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
 	return err
 }
 
-// DeleteAllSessions removes every session.
-func (s *Store) DeleteAllSessions(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions`)
-	return err
-}
-
 // DeleteExpiredSessions removes sessions that expired before now.
 func (s *Store) DeleteExpiredSessions(ctx context.Context, now time.Time) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE expires_at <= ?`, now.Unix())

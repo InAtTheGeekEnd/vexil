@@ -3,7 +3,6 @@
 package web
 
 import (
-	"context"
 	"strconv"
 	"testing"
 )
@@ -18,9 +17,7 @@ func TestReorderFailureReloadsInChrome(t *testing.T) {
 	ts, _ := browserFixture(t, s, st)
 	page, session := openPage(t, path, ts.URL+"/", "light", "")
 
-	if err := st.DeleteAllSessions(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	setPassword(t, st) // a password change ends every session
 	grip := `.mon-row[data-id="` + strconv.FormatInt(ids[1], 10) + `"] .mon-handle`
 	var ok bool
 	page.eval(session, "(document.querySelector("+strconv.Quote(grip)+").focus(), true)", &ok)

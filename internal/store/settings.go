@@ -55,11 +55,6 @@ func (s *Store) Settings(ctx context.Context, keys ...string) (map[string]string
 	return out, rows.Err()
 }
 
-// SetSetting inserts or replaces the value for key.
-func (s *Store) SetSetting(ctx context.Context, key, value string) error {
-	return s.SetSettings(ctx, map[string]string{key: value})
-}
-
 // SetSettings inserts or replaces every key in one transaction.
 func (s *Store) SetSettings(ctx context.Context, values map[string]string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
