@@ -108,8 +108,8 @@ func (s *Store) oldestDay(ctx context.Context, monitorID int64) (time.Time, bool
 func (s *Store) rollupDay(ctx context.Context, monitorID int64, day time.Time) error {
 	end := day.Add(24 * time.Hour)
 	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO hourly (monitor_id, hour, total, ok, avg_latency)
-		SELECT ?1, at / 3600 * 3600, COUNT(*), SUM(ok), `+checksAvgLatency+`
+		INSERT INTO hourly (monitor_id, hour, ok, avg_latency)
+		SELECT ?1, at / 3600 * 3600, SUM(ok), `+checksAvgLatency+`
 		FROM checks WHERE monitor_id = ?1 AND at >= ?2 AND at < ?3
 		GROUP BY 2
 		ON CONFLICT(monitor_id, hour) DO NOTHING`,
@@ -117,8 +117,8 @@ func (s *Store) rollupDay(ctx context.Context, monitorID int64, day time.Time) e
 		return err
 	}
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO daily (monitor_id, day, total, ok, avg_latency)
-		SELECT monitor_id, ?2, SUM(total), SUM(ok), `+hourlyAvgLatency+`
+		INSERT INTO daily (monitor_id, day, avg_latency)
+		SELECT monitor_id, ?2, `+hourlyAvgLatency+`
 		FROM hourly WHERE monitor_id = ?1 AND hour >= ?3 AND hour < ?4
 		GROUP BY monitor_id
 		ON CONFLICT(monitor_id, day) DO NOTHING`,
@@ -181,23 +181,22 @@ func (s *Store) rollupHours(ctx context.Context, now time.Time) error {
 // costs one primary key lookup per monitor.
 func (s *Store) rollupHour(ctx context.Context, hour time.Time, replace bool) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO hourly (monitor_id, hour, total, ok, avg_latency)
-		SELECT monitor_id, ?1, COUNT(*), SUM(ok), `+checksAvgLatency+`
+		INSERT INTO hourly (monitor_id, hour, ok, avg_latency)
+		SELECT monitor_id, ?1, SUM(ok), `+checksAvgLatency+`
 		FROM checks
 		WHERE monitor_id IN (SELECT id FROM monitors WHERE ?3 OR NOT EXISTS (
 				SELECT 1 FROM hourly WHERE hourly.monitor_id = monitors.id AND hourly.hour = ?1))
 			AND at >= ?1 AND at < ?2
 		GROUP BY monitor_id
-		ON CONFLICT(monitor_id, hour) DO UPDATE SET total = excluded.total, ok = excluded.ok, avg_latency = excluded.avg_latency`,
+		ON CONFLICT(monitor_id, hour) DO UPDATE SET ok = excluded.ok, avg_latency = excluded.avg_latency`,
 		hour.Unix(), hour.Add(time.Hour).Unix(), replace)
 	return err
 }
 
 // rollupDays writes the daily rows of the complete UTC days in the 30 days
-// before now from the hourly rows, so the dashboard reads daily and not the
-// raw checks. It rewrites yesterday, whose last hour can be rewritten after
-// an earlier run, and fills each older day that has no row yet, as after a
-// downtime. Today gets no row: the dashboard reads today from the hours.
+// before now from the hourly rows. It rewrites yesterday, whose last hour
+// can be rewritten after an earlier run, and fills each older day that has
+// no row yet, as after a downtime. Today gets no row: it is not complete.
 func (s *Store) rollupDays(ctx context.Context, now time.Time) error {
 	today := now.UTC().Truncate(24 * time.Hour)
 	yesterday := today.AddDate(0, 0, -1)
@@ -218,13 +217,13 @@ func (s *Store) rollupDays(ctx context.Context, now time.Time) error {
 // costs almost nothing.
 func (s *Store) rollupAll(ctx context.Context, day time.Time, replace bool) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO daily (monitor_id, day, total, ok, avg_latency)
-		SELECT monitor_id, ?1, SUM(total), SUM(ok), `+hourlyAvgLatency+`
+		INSERT INTO daily (monitor_id, day, avg_latency)
+		SELECT monitor_id, ?1, `+hourlyAvgLatency+`
 		FROM hourly
 		WHERE monitor_id IN (SELECT id FROM monitors WHERE ?2 OR id NOT IN (SELECT monitor_id FROM daily WHERE day = ?1))
 			AND hour >= ?3 AND hour < ?4
 		GROUP BY monitor_id
-		ON CONFLICT(monitor_id, day) DO UPDATE SET total = excluded.total, ok = excluded.ok, avg_latency = excluded.avg_latency`,
+		ON CONFLICT(monitor_id, day) DO UPDATE SET avg_latency = excluded.avg_latency`,
 		day.Format("2006-01-02"), replace, day.Unix(), day.Add(24*time.Hour).Unix())
 	return err
 }

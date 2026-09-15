@@ -6,113 +6,12 @@ import (
 	"time"
 )
 
-// DayStat is the uptime of one monitor on one UTC day.
-type DayStat struct {
-	Day       string // YYYY-MM-DD
-	Total     int
-	OK        int
-	Incidents int
-}
-
-// Percent returns the uptime of the day as 0 to 100.
-func (d DayStat) Percent() float64 {
-	if d.Total == 0 {
-		return 0
-	}
-	return float64(d.OK) * 100 / float64(d.Total)
-}
-
-// DailyStats returns one DayStat per UTC day from since to now, oldest
-// first. A day comes from its daily row. A day of the last 30 days without
-// a daily row, as today or yesterday before the job ran, comes from
-// MonitorHours. Other days have Total 0.
-func (s *Store) DailyStats(ctx context.Context, monitorID int64, since, now time.Time) ([]DayStat, error) {
-	since, now = since.UTC(), now.UTC()
-	first := time.Date(since.Year(), since.Month(), since.Day(), 0, 0, 0, 0, time.UTC)
-	byDay := map[string]*DayStat{}
-	var out []DayStat
-	for d := first; !d.After(now); d = d.AddDate(0, 0, 1) {
-		out = append(out, DayStat{Day: d.Format("2006-01-02")})
-	}
-	for i := range out {
-		byDay[out[i].Day] = &out[i]
-	}
-
-	rolled := map[string]bool{}
-	rows, err := s.db.QueryContext(ctx, `SELECT day, total, ok FROM daily WHERE monitor_id = ? AND day >= ?`,
-		monitorID, first.Format("2006-01-02"))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var day string
-		var total, ok int
-		if err := rows.Scan(&day, &total, &ok); err != nil {
-			return nil, err
-		}
-		rolled[day] = true
-		if d := byDay[day]; d != nil {
-			d.Total, d.OK = total, ok
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	// Only the last 30 days have hours, so the read starts at the first day
-	// among them without a daily row.
-	today := now.Truncate(24 * time.Hour)
-	from := today.AddDate(0, 0, -29)
-	if from.Before(first) {
-		from = first
-	}
-	start := today
-	for d := from; d.Before(today); d = d.AddDate(0, 0, 1) {
-		if !rolled[d.Format("2006-01-02")] {
-			start = d
-			break
-		}
-	}
-	hours, err := s.MonitorHours(ctx, monitorID, start)
-	if err != nil {
-		return nil, err
-	}
-	for _, h := range hours {
-		day := h.At.UTC().Format("2006-01-02")
-		if d := byDay[day]; d != nil && !rolled[day] {
-			d.Total += h.Total
-			d.OK += h.OK
-		}
-	}
-
-	inc, err := s.db.QueryContext(ctx, `
-		SELECT strftime('%Y-%m-%d', started_at, 'unixepoch'), COUNT(*)
-		FROM incidents WHERE monitor_id = ? AND started_at >= ? GROUP BY 1`,
-		monitorID, first.Unix())
-	if err != nil {
-		return nil, err
-	}
-	defer inc.Close()
-	for inc.Next() {
-		var day string
-		var n int
-		if err := inc.Scan(&day, &n); err != nil {
-			return nil, err
-		}
-		if d := byDay[day]; d != nil {
-			d.Incidents = n
-		}
-	}
-	return out, inc.Err()
-}
-
-// Bucket holds the checks of one monitor in one UTC hour.
+// Bucket holds the successful checks of one monitor in one UTC hour.
 type Bucket struct {
 	At         time.Time // start of the hour
-	Total      int
-	OK         int
-	LatencyMS  int64 // average latency of the successful checks
-	HasLatency bool  // false when no check in the hour succeeded
+	OK         int       // successful checks: the weight of LatencyMS
+	LatencyMS  int64     // average latency of the successful checks
+	HasLatency bool      // false when no check in the hour succeeded
 }
 
 // recentHoursQuery reads the hours of every monitor from ?1 on: the hourly
@@ -126,10 +25,10 @@ const recentHoursQuery = `
 	WITH rolled(until) AS (
 		SELECT COALESCE(MAX(hour) + 3600, ?1) FROM hourly
 		WHERE monitor_id IN (SELECT id FROM monitors) AND hour >= ?1)
-	SELECT monitor_id, hour, total, ok, avg_latency FROM hourly
+	SELECT monitor_id, hour, ok, avg_latency FROM hourly
 	WHERE monitor_id IN (SELECT id FROM monitors) AND hour >= ?1
 	UNION ALL
-	SELECT monitor_id, at / 3600 * 3600, COUNT(*), SUM(ok), AVG(CASE WHEN ok = 1 THEN latency_ms END)
+	SELECT monitor_id, at / 3600 * 3600, SUM(ok), AVG(CASE WHEN ok = 1 THEN latency_ms END)
 	FROM checks
 	WHERE monitor_id IN (SELECT id FROM monitors) AND at >= (SELECT until FROM rolled)
 	GROUP BY 1, 2
@@ -150,7 +49,7 @@ func (s *Store) RecentHours(ctx context.Context, since time.Time) (map[int64][]B
 		var id, at int64
 		var b Bucket
 		var avg sql.NullFloat64
-		if err := rows.Scan(&id, &at, &b.Total, &b.OK, &avg); err != nil {
+		if err := rows.Scan(&id, &at, &b.OK, &avg); err != nil {
 			return nil, err
 		}
 		b.At = time.Unix(at, 0)
@@ -166,9 +65,9 @@ func (s *Store) RecentHours(ctx context.Context, since time.Time) (map[int64][]B
 const monitorHoursQuery = `
 	WITH rolled(until) AS (
 		SELECT COALESCE(MAX(hour) + 3600, ?2) FROM hourly WHERE monitor_id = ?1 AND hour >= ?2)
-	SELECT hour, total, ok, avg_latency FROM hourly WHERE monitor_id = ?1 AND hour >= ?2
+	SELECT hour, ok, avg_latency FROM hourly WHERE monitor_id = ?1 AND hour >= ?2
 	UNION ALL
-	SELECT at / 3600 * 3600, COUNT(*), SUM(ok), AVG(CASE WHEN ok = 1 THEN latency_ms END) FROM checks
+	SELECT at / 3600 * 3600, SUM(ok), AVG(CASE WHEN ok = 1 THEN latency_ms END) FROM checks
 	WHERE monitor_id = ?1 AND at >= (SELECT until FROM rolled)
 	GROUP BY 1
 	ORDER BY 1`
@@ -188,7 +87,7 @@ func (s *Store) MonitorHours(ctx context.Context, monitorID int64, since time.Ti
 		var at int64
 		var b Bucket
 		var avg sql.NullFloat64
-		if err := rows.Scan(&at, &b.Total, &b.OK, &avg); err != nil {
+		if err := rows.Scan(&at, &b.OK, &avg); err != nil {
 			return nil, err
 		}
 		b.At = time.Unix(at, 0)
@@ -269,10 +168,9 @@ func latencyPoints(rows *sql.Rows) ([]LatencyPoint, error) {
 	return out, rows.Err()
 }
 
-// Summary counts the checks of a monitor since a time. AvgLatencyMS is the
-// average latency of the successful checks, or 0 when there is none.
+// Summary counts the successful checks of a monitor since a time.
+// AvgLatencyMS is their average latency, or 0 when there is none.
 type Summary struct {
-	Total        int
 	OK           int
 	AvgLatencyMS int64
 }
@@ -289,7 +187,6 @@ func (s *Store) Summary(ctx context.Context, monitorID int64, since time.Time) (
 	var sum float64
 	var n int
 	for _, h := range hours {
-		out.Total += h.Total
 		out.OK += h.OK
 		if h.HasLatency {
 			sum += float64(h.LatencyMS) * float64(h.OK)

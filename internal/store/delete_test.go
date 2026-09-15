@@ -38,10 +38,10 @@ func monitorWithHistory(t *testing.T, s *Store, name string) int64 {
 	if _, err := s.OpenIncident(ctx, m.ID, now, "HTTP 503"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO daily (monitor_id, day, total, ok) VALUES (?, '2026-09-01', 10, 9)`, m.ID); err != nil {
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO daily (monitor_id, day, avg_latency) VALUES (?, '2026-09-01', 90)`, m.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO hourly (monitor_id, hour, total, ok, avg_latency) VALUES (?, ?, 60, 59, 80)`,
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO hourly (monitor_id, hour, ok, avg_latency) VALUES (?, ?, 59, 80)`,
 		m.ID, now.Truncate(time.Hour).Add(-time.Hour).Unix()); err != nil {
 		t.Fatal(err)
 	}

@@ -21,10 +21,10 @@ func TestRecentHours(t *testing.T) {
 	// The store returns local times, as time.Unix does.
 	at := func(d time.Duration) time.Time { return time.Unix(current.Add(d).Unix(), 0) }
 	type hourlyRow struct {
-		monitor   int // index into the two monitors
-		hour      time.Time
-		total, ok int
-		avg       any // nil when no check succeeded
+		monitor int // index into the two monitors
+		hour    time.Time
+		ok      int
+		avg     any // nil when no check succeeded
 	}
 	tests := []struct {
 		name   string
@@ -35,9 +35,9 @@ func TestRecentHours(t *testing.T) {
 		{
 			name: "hourly rows, then the hours after the newest row from checks",
 			rows: []hourlyRow{
-				{0, since.Add(-time.Hour), 60, 60, 80},
-				{0, current.Add(-5 * time.Hour), 60, 59, 120},
-				{1, current.Add(-2 * time.Hour), 60, 0, nil},
+				{0, since.Add(-time.Hour), 60, 80},
+				{0, current.Add(-5 * time.Hour), 59, 120},
+				{1, current.Add(-2 * time.Hour), 0, nil},
 			},
 			checks: []Check{
 				{MonitorID: 0, At: since.Add(-time.Minute), OK: true, LatencyMS: 80},
@@ -50,14 +50,14 @@ func TestRecentHours(t *testing.T) {
 			},
 			want: [2][]Bucket{
 				{
-					{At: at(-5 * time.Hour), Total: 60, OK: 59, LatencyMS: 120, HasLatency: true},
-					{At: at(-time.Hour), Total: 2, OK: 2, LatencyMS: 151, HasLatency: true},
-					{At: at(0), Total: 1, OK: 1, LatencyMS: 50, HasLatency: true},
+					{At: at(-5 * time.Hour), OK: 59, LatencyMS: 120, HasLatency: true},
+					{At: at(-time.Hour), OK: 2, LatencyMS: 151, HasLatency: true},
+					{At: at(0), OK: 1, LatencyMS: 50, HasLatency: true},
 				},
 				{
-					{At: at(-2 * time.Hour), Total: 60},
-					{At: at(-time.Hour), Total: 1},
-					{At: at(0), Total: 1},
+					{At: at(-2 * time.Hour)},
+					{At: at(-time.Hour)},
+					{At: at(0)},
 				},
 			},
 		},
@@ -69,8 +69,8 @@ func TestRecentHours(t *testing.T) {
 			},
 			want: [2][]Bucket{
 				{
-					{At: at(-3 * time.Hour), Total: 1, OK: 1, LatencyMS: 100, HasLatency: true},
-					{At: at(0), Total: 1, OK: 1, LatencyMS: 300, HasLatency: true},
+					{At: at(-3 * time.Hour), OK: 1, LatencyMS: 100, HasLatency: true},
+					{At: at(0), OK: 1, LatencyMS: 300, HasLatency: true},
 				},
 			},
 		},
@@ -88,8 +88,8 @@ func TestRecentHours(t *testing.T) {
 				ids[i] = m.ID
 			}
 			for _, r := range tc.rows {
-				if _, err := s.db.ExecContext(ctx, `INSERT INTO hourly (monitor_id, hour, total, ok, avg_latency) VALUES (?, ?, ?, ?, ?)`,
-					ids[r.monitor], r.hour.Unix(), r.total, r.ok, r.avg); err != nil {
+				if _, err := s.db.ExecContext(ctx, `INSERT INTO hourly (monitor_id, hour, ok, avg_latency) VALUES (?, ?, ?, ?)`,
+					ids[r.monitor], r.hour.Unix(), r.ok, r.avg); err != nil {
 					t.Fatal(err)
 				}
 			}

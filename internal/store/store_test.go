@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 )
@@ -29,6 +30,40 @@ func TestOpenIsIdempotent(t *testing.T) {
 			t.Fatalf("Ping #%d: %v", i+1, err)
 		}
 		s.Close()
+	}
+}
+
+// TestRollupColumns checks the columns of the rollup tables after all the
+// migrations: no check counts, only the weight and the average latency.
+func TestRollupColumns(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	tests := []struct {
+		table string
+		want  []string
+	}{
+		{"daily", []string{"monitor_id", "day", "avg_latency"}},
+		{"hourly", []string{"monitor_id", "hour", "ok", "avg_latency"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.table, func(t *testing.T) {
+			rows, err := s.db.QueryContext(ctx, `SELECT name FROM pragma_table_info(?)`, tc.table)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rows.Close()
+			var got []string
+			for rows.Next() {
+				var name string
+				if err := rows.Scan(&name); err != nil {
+					t.Fatal(err)
+				}
+				got = append(got, name)
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("columns = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

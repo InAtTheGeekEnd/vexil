@@ -10,8 +10,8 @@ import (
 
 // hourRow is one row of the hourly table.
 type hourRow struct {
-	total, ok int
-	avg       sql.NullInt64
+	ok  int
+	avg sql.NullInt64
 }
 
 // readHour returns the hourly row of a monitor and hour, and false when
@@ -19,8 +19,8 @@ type hourRow struct {
 func readHour(t *testing.T, s *Store, id int64, hour time.Time) (hourRow, bool) {
 	t.Helper()
 	var r hourRow
-	err := s.db.QueryRowContext(context.Background(), `SELECT total, ok, avg_latency FROM hourly WHERE monitor_id = ? AND hour = ?`,
-		id, hour.Unix()).Scan(&r.total, &r.ok, &r.avg)
+	err := s.db.QueryRowContext(context.Background(), `SELECT ok, avg_latency FROM hourly WHERE monitor_id = ? AND hour = ?`,
+		id, hour.Unix()).Scan(&r.ok, &r.avg)
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, false
 	}
@@ -61,7 +61,7 @@ func TestRollupHoursFillsMissing(t *testing.T) {
 	insert(Check{MonitorID: ids[1], At: old.Add(5 * time.Minute), Error: "timeout"})
 	insert(Check{MonitorID: ids[0], At: first.Add(59 * time.Minute), OK: true, LatencyMS: 80})
 	insert(Check{MonitorID: ids[0], At: before.Add(30 * time.Minute), OK: true, LatencyMS: 80})
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO hourly (monitor_id, hour, total, ok, avg_latency) VALUES (?, ?, 9, 9, 1)`,
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO hourly (monitor_id, hour, ok, avg_latency) VALUES (?, ?, 9, 1)`,
 		ids[1], old.Unix()); err != nil {
 		t.Fatal(err)
 	}
@@ -74,11 +74,11 @@ func TestRollupHoursFillsMissing(t *testing.T) {
 		want     hourRow
 		wantRows bool
 	}{
-		{"missing hour is filled", nil, ids[0], old, hourRow{2, 2, sql.NullInt64{Int64: 150, Valid: true}}, true},
-		{"existing row is kept", nil, ids[1], old, hourRow{9, 9, sql.NullInt64{Int64: 1, Valid: true}}, true},
-		{"first hour of the window", nil, ids[0], first, hourRow{1, 1, sql.NullInt64{Int64: 80, Valid: true}}, true},
+		{"missing hour is filled", nil, ids[0], old, hourRow{2, sql.NullInt64{Int64: 150, Valid: true}}, true},
+		{"existing row is kept", nil, ids[1], old, hourRow{9, sql.NullInt64{Int64: 1, Valid: true}}, true},
+		{"first hour of the window", nil, ids[0], first, hourRow{1, sql.NullInt64{Int64: 80, Valid: true}}, true},
 		{"hour before the window", nil, ids[0], before, hourRow{}, false},
-		{"late check keeps the filled row", &Check{MonitorID: ids[0], At: old.Add(3 * time.Minute), Error: "HTTP 503"}, ids[0], old, hourRow{2, 2, sql.NullInt64{Int64: 150, Valid: true}}, true},
+		{"late check keeps the filled row", &Check{MonitorID: ids[0], At: old.Add(3 * time.Minute), Error: "HTTP 503"}, ids[0], old, hourRow{2, sql.NullInt64{Int64: 150, Valid: true}}, true},
 	}
 	for _, tc := range tests {
 		if tc.late != nil {
@@ -132,10 +132,10 @@ func TestRollupHours(t *testing.T) {
 		want     hourRow
 		wantRows bool
 	}{
-		{"finished hour, average rounded", nil, ids[0], finished, hourRow{3, 2, sql.NullInt64{Int64: 151, Valid: true}}, true},
-		{"failures only, no latency", nil, ids[1], finished, hourRow{1, 0, sql.NullInt64{}}, true},
+		{"finished hour, average rounded", nil, ids[0], finished, hourRow{2, sql.NullInt64{Int64: 151, Valid: true}}, true},
+		{"failures only, no latency", nil, ids[1], finished, hourRow{0, sql.NullInt64{}}, true},
 		{"current hour has no row", nil, ids[0], current, hourRow{}, false},
-		{"late check rewrites the hour", &Check{MonitorID: ids[0], At: finished.Add(45 * time.Minute), OK: true, LatencyMS: 300}, ids[0], finished, hourRow{4, 3, sql.NullInt64{Int64: 200, Valid: true}}, true},
+		{"late check rewrites the hour", &Check{MonitorID: ids[0], At: finished.Add(45 * time.Minute), OK: true, LatencyMS: 300}, ids[0], finished, hourRow{3, sql.NullInt64{Int64: 200, Valid: true}}, true},
 	}
 	for _, tc := range tests {
 		if tc.late != nil {
@@ -188,22 +188,18 @@ func TestRollupDays(t *testing.T) {
 			}
 		}
 	}
-	hour := func(at time.Time, total, ok int, avg int64) {
+	hour := func(at time.Time, ok int, avg int64) {
 		t.Helper()
-		if _, err := s.db.ExecContext(ctx, `INSERT INTO hourly (monitor_id, hour, total, ok, avg_latency) VALUES (?, ?, ?, ?, ?)`,
-			m.ID, at.Unix(), total, ok, avg); err != nil {
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO hourly (monitor_id, hour, ok, avg_latency) VALUES (?, ?, ?, ?)`,
+			m.ID, at.Unix(), ok, avg); err != nil {
 			t.Fatal(err)
 		}
 	}
-	type dayRow struct {
-		total, ok int
-		avg       sql.NullInt64
-	}
-	read := func(day time.Time) (dayRow, bool) {
+	read := func(day time.Time) (sql.NullInt64, bool) {
 		t.Helper()
-		var r dayRow
-		err := s.db.QueryRowContext(ctx, `SELECT total, ok, avg_latency FROM daily WHERE monitor_id = ? AND day = ?`,
-			m.ID, day.Format("2006-01-02")).Scan(&r.total, &r.ok, &r.avg)
+		var r sql.NullInt64
+		err := s.db.QueryRowContext(ctx, `SELECT avg_latency FROM daily WHERE monitor_id = ? AND day = ?`,
+			m.ID, day.Format("2006-01-02")).Scan(&r)
 		if errors.Is(err, sql.ErrNoRows) {
 			return r, false
 		}
@@ -214,11 +210,11 @@ func TestRollupDays(t *testing.T) {
 	}
 	ms := func(v int64) sql.NullInt64 { return sql.NullInt64{Int64: v, Valid: true} }
 
-	hour(yesterday.Add(5*time.Hour), 60, 57, 100)
+	hour(yesterday.Add(5*time.Hour), 57, 100)
 	insert(yesterday.Add(23*time.Hour), 2, 2, 200)
 	insert(older.Add(time.Hour), 4, 3, 100)
 	insert(today.Add(5*time.Minute), 3, 1, 50)
-	hour(expired.Add(time.Hour), 60, 60, 100)
+	hour(expired.Add(time.Hour), 60, 100)
 	insert(expired.Add(time.Hour), 10, 10, 900)
 	insert(expired.Add(2*time.Hour), 5, 5, 300)
 
@@ -228,21 +224,22 @@ func TestRollupDays(t *testing.T) {
 		late  func()
 		run   func() error
 		day   time.Time
-		want  dayRow
+		want  sql.NullInt64
 		found bool
 	}{
-		// 60 + 2 checks, 57 + 2 up, (57 x 100 + 2 x 200) / 59 = 103 ms.
-		{"yesterday from its hourly rows", nil, rollup, yesterday, dayRow{62, 59, ms(103)}, true},
-		{"older day from its filled hours", nil, rollup, older, dayRow{4, 3, ms(100)}, true},
-		{"today has no row", nil, rollup, today, dayRow{}, false},
-		{"late check rewrites yesterday", func() { insert(yesterday.Add(23*time.Hour+59*time.Minute+50*time.Second), 1, 0, 0) },
-			rollup, yesterday, dayRow{63, 59, ms(103)}, true},
-		{"late check keeps the older day", func() { insert(older.Add(time.Hour+30*time.Minute), 1, 0, 0) },
-			rollup, older, dayRow{4, 3, ms(100)}, true},
+		// 57 + 2 up, (57 x 100 + 2 x 200) / 59 = 103 ms.
+		{"yesterday from its hourly rows", nil, rollup, yesterday, ms(103), true},
+		{"older day from its filled hours", nil, rollup, older, ms(100), true},
+		{"today has no row", nil, rollup, today, sql.NullInt64{}, false},
+		// A late success at 500 ms rewrites yesterday: (57 x 100 + 3 x 300) / 60 = 110 ms.
+		{"late check rewrites yesterday", func() { insert(yesterday.Add(23*time.Hour+59*time.Minute+50*time.Second), 1, 1, 500) },
+			rollup, yesterday, ms(110), true},
+		{"late check keeps the older day", func() { insert(older.Add(time.Hour+30*time.Minute), 1, 1, 500) },
+			rollup, older, ms(100), true},
 		// The row of 01:00 wins over its 10 checks: 60 + 5 checks,
 		// (60 x 100 + 5 x 300) / 65 = 115 ms.
 		{"retain builds an expired day from hourly rows", nil, func() error { _, err := s.Retain(ctx, now, retentionBatch); return err },
-			expired, dayRow{65, 65, ms(115)}, true},
+			expired, ms(115), true},
 	}
 	for _, tc := range tests {
 		if tc.late != nil {
