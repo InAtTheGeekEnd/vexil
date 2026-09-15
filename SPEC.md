@@ -178,6 +178,8 @@ All monitors have: **Name**, **Interval** (30s, 1m, 5m, 15m, 30m, 1h, 6h, 12h, 2
 | `DOWN` | 2 or more checks failed in a row. |
 | `PAUSED` | The user paused the monitor. No checks run. |
 
+Uptime is the time outside incidents, not a count of checks. A day's uptime is the seconds of the day not inside an incident, divided by the seconds the monitor was live that day. A monitor is live from its creation, except while it is paused: a paused period is not live. A day with no incident is 100%. A failed check that opened no incident counts nowhere. The 24 h, 7 d, 30 d and 90 d figures use the same rule over their windows, which end now. The `pauses` table records the paused periods. The `daily` and `hourly` rows keep their `ok` and `total` columns, but no uptime figure reads them. One function computes every uptime figure, and the dashboard, the monitor detail page and the public status page all call it.
+
 ### 6.2 Transitions
 
 - `PENDING` to `UP`: first success. No alert.
@@ -354,6 +356,13 @@ CREATE TABLE incidents (
   FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
 );
 
+CREATE TABLE pauses (                 -- the periods a monitor was paused: not live for uptime (section 6.1)
+  monitor_id  INTEGER NOT NULL,
+  started_at  INTEGER NOT NULL,
+  ended_at    INTEGER,                -- NULL while the pause lasts
+  FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
+);
+
 CREATE TABLE channels (
   id          INTEGER PRIMARY KEY,
   type        TEXT NOT NULL,
@@ -377,7 +386,7 @@ CREATE TABLE settings (
 ```
 
 - Use WAL mode.
-- Open every connection with `PRAGMA foreign_keys = ON`, so a deleted monitor takes its checks, hourly rows, daily rows and incidents with it.
+- Open every connection with `PRAGMA foreign_keys = ON`, so a deleted monitor takes its checks, hourly rows, daily rows, incidents and pauses with it.
 - Migrations: numbered `.sql` files in `internal/store/migrations`, embedded, run at startup.
 - A background job runs 30 seconds after every full hour. It writes the `hourly` rows of the hours that have finished and fills any missing hour of the last 30 days. It builds `daily` from `hourly`, not from `checks`. It deletes `checks` and `hourly` rows older than 30 days.
 - The 24-hour sparkline and the 7-day and 30-day response charts read `hourly`. An hour without a row yet, as the current hour, comes from `checks`.
@@ -436,7 +445,7 @@ On failure, the failed part shows a short reason, for example `"database": "lock
   - Status dot.
   - Name. Target below it in muted text.
   - 30-day uptime bar (30 segments, one per day).
-  - Uptime percentage for 30 days.
+  - Uptime percentage for 30 days, by the rule of section 6.1 over the last 30 days.
   - Response time sparkline (last 24 hours).
   - "Checked 12s ago" in muted text.
 - The whole row is a link to the detail page.
@@ -452,7 +461,7 @@ On failure, the failed part shows a short reason, for example `"database": "lock
 ### 9.4 Monitor detail
 
 - Large name, status, and "Up for 14 days" or "Down for 6m".
-- Four stat tiles: uptime 24h, 7d, 30d, 90d. Plus average response time. Plus certificate expiry for HTTPS.
+- Four stat tiles: uptime 24h, 7d, 30d, 90d, each by the rule of section 6.1 over its window. Plus average response time. Plus certificate expiry for HTTPS.
 - Response time chart: 24h, 7d, 30d toggle.
 - 90-day uptime bar.
 - Incident list: start, duration, reason.
@@ -515,7 +524,7 @@ All text must pass WCAG AA contrast.
 ### 10.5 Components
 
 - **Status dot.** 8 px. UP: solid green with a slow, soft halo pulse (2.4 s). DOWN: solid red with a faster pulse (1.2 s). PAUSED: gray ring, no fill. PENDING: gray, pulsing. Always add a text label for screen readers.
-- **Uptime bar.** Thin rounded segments, 2 px gap, 28 px high. Colors: 100% = `--up`, 95% to 99.99% = `--warn`, below 95% = `--down`, no data = `--border`. Hover shows a tooltip: date, uptime, incidents.
+- **Uptime bar.** Thin rounded segments, 2 px gap, 28 px high. Each segment is one day, colored by its uptime under the rule of section 6.1: 100% = `--up`, 95% to 99.99% = `--warn`, below 95% = `--down`, no data = `--border`. A day with no incident is always green. No data means the monitor did not exist yet or was paused all day. The percentage is cut to two decimals, not rounded, so only a full 100% is green. Hover shows a tooltip: date, uptime, incidents.
 - **Response chart.** SVG. A smooth line in `--accent`. An area fill below it from 12% opacity to 0%. A hover crosshair with a value tooltip. No grid lines except a faint baseline.
 - **Sparkline.** 80 x 24 px. Same style as the chart, no axes.
 - **Cards.** `--surface` background, 1 px `--border`, 12 px radius. No heavy shadows.
