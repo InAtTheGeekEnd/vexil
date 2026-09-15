@@ -254,7 +254,7 @@ func TestDashboardOrderAndReorder(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := st.SetPaused(ctx, ids[2], true); err != nil {
+	if err := st.SetPaused(ctx, ids[2], true, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))

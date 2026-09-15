@@ -416,7 +416,7 @@ func (s *Server) setPaused(w http.ResponseWriter, r *http.Request, paused bool) 
 	if !ok {
 		return
 	}
-	if err := s.store.SetPaused(r.Context(), m.ID, paused); err != nil {
+	if err := s.store.SetPaused(r.Context(), m.ID, paused, time.Now()); err != nil {
 		s.serverError(w, err)
 		return
 	}

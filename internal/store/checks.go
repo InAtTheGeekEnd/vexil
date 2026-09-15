@@ -124,6 +124,26 @@ func (s *Store) Incidents(ctx context.Context, monitorID int64, n int) ([]Incide
 	return out, rows.Err()
 }
 
+// IncidentsSince returns the incidents of a monitor that were open at any
+// time since the given time, oldest first.
+func (s *Store) IncidentsSince(ctx context.Context, monitorID int64, since time.Time) ([]Incident, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, monitor_id, started_at, ended_at, COALESCE(reason, '')
+		FROM incidents WHERE monitor_id = ? AND (ended_at IS NULL OR ended_at >= ?) ORDER BY started_at`, monitorID, since.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Incident
+	for rows.Next() {
+		inc, err := scanIncident(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, inc)
+	}
+	return out, rows.Err()
+}
+
 func scanIncident(row interface{ Scan(...any) error }) (Incident, error) {
 	var inc Incident
 	var started int64
