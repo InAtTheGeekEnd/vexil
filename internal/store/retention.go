@@ -194,10 +194,9 @@ func (s *Store) rollupHour(ctx context.Context, hour time.Time, replace bool) er
 }
 
 // rollupDays writes the daily rows of the complete UTC days in the 30 days
-// before now from the hourly rows, so the dashboard reads daily and not the
-// raw checks. It rewrites yesterday, whose last hour can be rewritten after
-// an earlier run, and fills each older day that has no row yet, as after a
-// downtime. Today gets no row: the dashboard reads today from the hours.
+// before now from the hourly rows. It rewrites yesterday, whose last hour
+// can be rewritten after an earlier run, and fills each older day that has
+// no row yet, as after a downtime. Today gets no row: it is not complete.
 func (s *Store) rollupDays(ctx context.Context, now time.Time) error {
 	today := now.UTC().Truncate(24 * time.Hour)
 	yesterday := today.AddDate(0, 0, -1)
