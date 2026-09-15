@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func TestDailyStatsAndLatencySeries(t *testing.T) {
+func TestLatencySeries(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
 	m := &Monitor{Name: "m", Type: TypeHTTP, Target: "https://x"}
@@ -18,8 +18,7 @@ func TestDailyStatsAndLatencySeries(t *testing.T) {
 		{At: now.Add(-30 * time.Minute), OK: true, LatencyMS: 100},
 		{At: now.Add(-20 * time.Minute), OK: true, LatencyMS: 300},
 		{At: now.Add(-10 * time.Minute), OK: false, Error: "HTTP 503"},
-		{At: now.AddDate(0, 0, -1), OK: true, LatencyMS: 50},
-		{At: now.AddDate(0, 0, -40), OK: false}, // outside the window
+		{At: now.AddDate(0, 0, -1), OK: true, LatencyMS: 50}, // outside the window
 	}
 	for _, c := range checks {
 		c.MonitorID = m.ID
@@ -27,40 +26,6 @@ func TestDailyStatsAndLatencySeries(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO daily (monitor_id, day, total, ok) VALUES (?, ?, 10, 9)`,
-		m.ID, now.AddDate(0, 0, -2).Format("2006-01-02")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.OpenIncident(ctx, m.ID, now.Add(-10*time.Minute), "HTTP 503"); err != nil {
-		t.Fatal(err)
-	}
-
-	days, err := s.DailyStats(ctx, m.ID, now.AddDate(0, 0, -29), now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(days) != 30 {
-		t.Fatalf("got %d days, want 30", len(days))
-	}
-	tests := []struct {
-		idx                  int
-		total, ok, incidents int
-	}{
-		{29, 3, 2, 1},
-		{28, 1, 1, 0},
-		{27, 10, 9, 0},
-		{0, 0, 0, 0},
-	}
-	for _, tt := range tests {
-		d := days[tt.idx]
-		if d.Total != tt.total || d.OK != tt.ok || d.Incidents != tt.incidents {
-			t.Errorf("day %d (%s) = %+v, want total %d ok %d incidents %d", tt.idx, d.Day, d, tt.total, tt.ok, tt.incidents)
-		}
-	}
-	if days[29].Day != "2026-09-11" || days[0].Day != "2026-08-13" {
-		t.Errorf("day range = %s .. %s", days[0].Day, days[29].Day)
-	}
-
 	series, err := s.LatencySeries(ctx, m.ID, now.Add(-time.Hour), 30*time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -70,13 +35,11 @@ func TestDailyStatsAndLatencySeries(t *testing.T) {
 	}
 }
 
-// TestDailyStatsSources reads 46 days after the job ran yesterday and
-// Retain ran today. A day comes from its daily row: the expired day that
-// Retain rolled up, and the cutoff day, whose checks Retain keeps. A day of
-// the last 30 days without a daily row, and today, come from the checks
-// through the hours. An older day without a daily row reads no checks: in
-// use, Retain rolls it up before its checks can be read.
-func TestDailyStatsSources(t *testing.T) {
+// TestRollupAndRetainRows runs the job as it ran yesterday and then Retain,
+// with checks on an expired day and on the cutoff day. The expired day
+// keeps only its daily row. The cutoff day keeps its checks, its hourly row
+// and its daily row. Both daily rows average the successful checks.
+func TestRollupAndRetainRows(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
 	m := &Monitor{Name: "m", Type: TypeHTTP, Target: "https://x", IntervalS: 60}
@@ -99,32 +62,29 @@ func TestDailyStatsSources(t *testing.T) {
 	if n := countChecks(t, s, m.ID); n != 20 {
 		t.Fatalf("checks after Retain = %d, want the 20 of the cutoff day", n)
 	}
-	seedChecks(t, s, m.ID, day(-40), 10, true)
-	seedChecks(t, s, m.ID, day(-29), 10, true)
-	seedChecks(t, s, m.ID, now.Add(-2*time.Hour), 6, true)
-
-	stats, err := s.DailyStats(ctx, m.ID, today.AddDate(0, 0, -45), now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(stats) != 46 {
-		t.Fatalf("got %d days, want 46", len(stats))
+	count := func(query string, args ...any) int {
+		t.Helper()
+		var n int
+		if err := s.db.QueryRowContext(ctx, query, args...).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
 	}
 	tests := []struct {
-		name      string
-		day       int // days before today
-		total, ok int
+		name  string
+		query string
+		args  []any
+		want  int
 	}{
-		{"expired day from the daily row of Retain", -45, 10, 10},
-		{"older day without a daily row reads no checks", -40, 0, 0},
-		{"cutoff day from its daily row", -30, 20, 10},
-		{"day of the last 30 days without a daily row", -29, 10, 10},
-		{"today", 0, 6, 6},
+		{"daily rows", `SELECT COUNT(*) FROM daily WHERE monitor_id = ?`, []any{m.ID}, 2},
+		{"daily rows at 100 ms", `SELECT COUNT(*) FROM daily WHERE monitor_id = ? AND avg_latency = 100`, []any{m.ID}, 2},
+		{"hourly rows of the expired day", `SELECT COUNT(*) FROM hourly WHERE monitor_id = ? AND hour < ?`, []any{m.ID, day(-44).Unix()}, 0},
+		{"hourly rows of the cutoff day", `SELECT COUNT(*) FROM hourly WHERE monitor_id = ? AND hour >= ?`, []any{m.ID, day(-30).Unix()}, 1},
+		{"hourly rows at 100 ms", `SELECT COUNT(*) FROM hourly WHERE monitor_id = ? AND avg_latency = 100`, []any{m.ID}, 1},
 	}
 	for _, tc := range tests {
-		d := stats[45+tc.day]
-		if d.Total != tc.total || d.OK != tc.ok {
-			t.Errorf("%s: %s = %d checks, %d ok; want %d, %d", tc.name, d.Day, d.Total, d.OK, tc.total, tc.ok)
+		if got := count(tc.query, tc.args...); got != tc.want {
+			t.Errorf("%s = %d, want %d", tc.name, got, tc.want)
 		}
 	}
 }
