@@ -2,8 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"io"
 	"log/slog"
 	"testing"
@@ -30,67 +28,6 @@ func countChecks(t *testing.T, s *Store, id int64) int {
 		t.Fatal(err)
 	}
 	return n
-}
-
-// TestRollupDayBeforeDelete rolls one day up, checks its rows, and deletes
-// its checks. The daily row is written while the checks are still there, a
-// second rollup keeps it, and it stays after the delete.
-func TestRollupDayBeforeDelete(t *testing.T) {
-	s := openTest(t)
-	ctx := context.Background()
-	m := &Monitor{Name: "A", Type: TypeHTTP, Target: "https://a.example", IntervalS: 60}
-	if err := s.CreateMonitor(ctx, m); err != nil {
-		t.Fatal(err)
-	}
-	day := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
-	seedChecks(t, s, m.ID, day.Add(time.Hour), 90, true)
-	seedChecks(t, s, m.ID, day.Add(2*time.Hour), 10, false)
-	rows := func() (hours int, avg sql.NullInt64) {
-		t.Helper()
-		if err := s.db.QueryRow(`SELECT COUNT(*) FROM hourly WHERE monitor_id = ? AND hour >= ? AND hour < ?`,
-			m.ID, day.Unix(), day.AddDate(0, 0, 1).Unix()).Scan(&hours); err != nil {
-			t.Fatal(err)
-		}
-		err := s.db.QueryRow(`SELECT avg_latency FROM daily WHERE monitor_id = ? AND day = '2026-07-01'`, m.ID).Scan(&avg)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			t.Fatal(err)
-		}
-		return hours, avg
-	}
-	if hours, avg := rows(); hours != 0 || avg.Valid {
-		t.Fatalf("rows before the rollup = %d hours, daily %+v", hours, avg)
-	}
-
-	// The daily row exists while the raw checks are still there: two hours,
-	// one of them failures only, average 100 ms.
-	if err := s.rollupDay(ctx, m.ID, day); err != nil {
-		t.Fatal(err)
-	}
-	if hours, avg := rows(); hours != 2 || avg.Int64 != 100 {
-		t.Fatalf("rows after the rollup = %d hours, daily %+v", hours, avg)
-	}
-	if countChecks(t, s, m.ID) != 100 {
-		t.Fatal("rollup deleted checks")
-	}
-
-	// A second rollup keeps the complete rows, even after the checks changed.
-	if _, err := s.db.Exec(`UPDATE checks SET latency_ms = 500 WHERE monitor_id = ?`, m.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.rollupDay(ctx, m.ID, day); err != nil {
-		t.Fatal(err)
-	}
-	if hours, avg := rows(); hours != 2 || avg.Int64 != 100 {
-		t.Fatalf("rows after the second rollup = %d hours, daily %+v", hours, avg)
-	}
-
-	n, err := s.deleteDay(ctx, m.ID, day, 500)
-	if err != nil || n != 100 {
-		t.Fatalf("deleteDay = %d, %v", n, err)
-	}
-	if hours, avg := rows(); hours != 2 || avg.Int64 != 100 {
-		t.Fatalf("rows after the delete = %d hours, daily %+v", hours, avg)
-	}
 }
 
 func TestRetainDeletesInBatches(t *testing.T) {
@@ -133,17 +70,9 @@ func TestRetainDeletesInBatches(t *testing.T) {
 	if got := countChecks(t, s, fresh.ID); got != 30 {
 		t.Fatalf("fresh monitor has %d checks left, want 30", got)
 	}
-	var days int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM daily WHERE monitor_id = ?`, old.ID).Scan(&days); err != nil || days != 2 {
-		t.Fatalf("daily rows = %d, %v; want 2", days, err)
-	}
-	var avg int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM daily WHERE monitor_id = ? AND avg_latency = 100`, old.ID).Scan(&avg); err != nil || avg != 2 {
-		t.Fatalf("daily rows at 100 ms = %d, %v; want 2", avg, err)
-	}
 
 	// A cancelled context stops between batches without an error in the
-	// data: the daily row is complete and the rest goes next time.
+	// data: the rest goes next time.
 	seedChecks(t, s, old.ID, now.AddDate(0, 0, -40), 300, true)
 	cctx, cancel := context.WithCancel(ctx)
 	cancel()
@@ -159,8 +88,7 @@ func TestRetainDeletesInBatches(t *testing.T) {
 // TestRetainDeletesHourly runs the job and then Retain. The hourly rows
 // before the cutoff go with the checks, also a row of a monitor that has no
 // checks left, as after a run that stopped between the two deletes. The
-// hours of the cutoff day and recent hours stay, and the expired day keeps
-// its daily row.
+// hours of the cutoff day and recent hours stay.
 func TestRetainDeletesHourly(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
@@ -203,11 +131,6 @@ func TestRetainDeletesHourly(t *testing.T) {
 		if _, found := readHour(t, s, tc.id, tc.hour); found != tc.found {
 			t.Errorf("%s: hourly row found %v, want %v", tc.name, found, tc.found)
 		}
-	}
-	var avg int
-	if err := s.db.QueryRowContext(ctx, `SELECT avg_latency FROM daily WHERE monitor_id = ? AND day = ?`,
-		a.ID, expired.Format("2006-01-02")).Scan(&avg); err != nil || avg != 100 {
-		t.Fatalf("daily row of the expired day: avg %d, %v; want 100", avg, err)
 	}
 }
 

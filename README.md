@@ -276,7 +276,7 @@ Copy the backup file off the server. Do not copy the live data folder: the datab
 
 To restore, stop vexil, delete `vexil.db`, `vexil.db-wal` and `vexil.db-shm` from the data folder, and put the backup file there as `vexil.db`.
 
-The database holds everything. Raw check results are kept for 30 days. A daily summary per monitor is kept forever.
+The database holds everything. Raw check results are kept for 30 days. Incidents are kept forever.
 
 ### Forgot your password?
 

@@ -19,8 +19,8 @@ import (
 
 // benchServer builds a server whose store holds 100 monitors with 30 days of
 // checks at the given interval in seconds, an incident a day, and the
-// hourly and daily rows that the job writes. It returns the monitor ids and a function that serves
-// one logged-in GET request. The engine is not started, so no check runs
+// hourly rows that the job writes. It returns the monitor ids and a
+// function that serves one logged-in GET request. The engine is not started, so no check runs
 // during the benchmark.
 func benchServer(b *testing.B, interval int) ([]int64, func(path string)) {
 	b.Helper()
@@ -75,7 +75,7 @@ func benchServer(b *testing.B, interval int) ([]int64, func(path string)) {
 	if err := db.Close(); err != nil {
 		b.Fatal(err)
 	}
-	// The hourly job writes the hourly and daily rows.
+	// The hourly job writes the hourly rows.
 	if err := st.Rollup(ctx, time.Now()); err != nil {
 		b.Fatal(err)
 	}

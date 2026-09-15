@@ -37,8 +37,8 @@ func TestLatencySeries(t *testing.T) {
 
 // TestRollupAndRetainRows runs the job as it ran yesterday and then Retain,
 // with checks on an expired day and on the cutoff day. The expired day
-// keeps only its daily row. The cutoff day keeps its checks, its hourly row
-// and its daily row. Both daily rows average the successful checks.
+// keeps nothing. The cutoff day keeps its checks and its hourly row, which
+// averages the successful checks.
 func TestRollupAndRetainRows(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
@@ -76,8 +76,6 @@ func TestRollupAndRetainRows(t *testing.T) {
 		args  []any
 		want  int
 	}{
-		{"daily rows", `SELECT COUNT(*) FROM daily WHERE monitor_id = ?`, []any{m.ID}, 2},
-		{"daily rows at 100 ms", `SELECT COUNT(*) FROM daily WHERE monitor_id = ? AND avg_latency = 100`, []any{m.ID}, 2},
 		{"hourly rows of the expired day", `SELECT COUNT(*) FROM hourly WHERE monitor_id = ? AND hour < ?`, []any{m.ID, day(-44).Unix()}, 0},
 		{"hourly rows of the cutoff day", `SELECT COUNT(*) FROM hourly WHERE monitor_id = ? AND hour >= ?`, []any{m.ID, day(-30).Unix()}, 1},
 		{"hourly rows at 100 ms", `SELECT COUNT(*) FROM hourly WHERE monitor_id = ? AND avg_latency = 100`, []any{m.ID}, 1},

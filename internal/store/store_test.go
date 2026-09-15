@@ -42,7 +42,6 @@ func TestRollupColumns(t *testing.T) {
 		table string
 		want  []string
 	}{
-		{"daily", []string{"monitor_id", "day", "avg_latency"}},
 		{"hourly", []string{"monitor_id", "hour", "ok", "avg_latency"}},
 	}
 	for _, tc := range tests {
@@ -67,10 +66,22 @@ func TestRollupColumns(t *testing.T) {
 	}
 }
 
+// TestDailyTableDropped checks that migration 006 removed the daily table:
+// no page reads it, and Retain writes nothing for the days it deletes.
+func TestDailyTableDropped(t *testing.T) {
+	s := openTest(t)
+	var n int
+	err := s.db.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'daily'`).Scan(&n)
+	if err != nil || n != 0 {
+		t.Fatalf("daily table exists: n=%d err=%v", n, err)
+	}
+}
+
 func TestMigrationsCreateTables(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
-	tables := []string{"monitors", "monitor_groups", "checks", "hourly", "daily", "incidents", "pauses", "channels", "sessions", "settings", "schema_migrations"}
+	tables := []string{"monitors", "monitor_groups", "checks", "hourly", "incidents", "pauses", "channels", "sessions", "settings", "schema_migrations"}
 	for _, tbl := range tables {
 		t.Run(tbl, func(t *testing.T) {
 			var n int

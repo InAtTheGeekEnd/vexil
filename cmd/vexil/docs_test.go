@@ -14,7 +14,7 @@ import (
 )
 
 // TestRetentionDocs reads SPEC 4.4. The job keeps checks and hourly rows for
-// store.RawRetention and daily rows forever, so the table must say so.
+// store.RawRetention, and incidents are kept forever, so the table must say so.
 func TestRetentionDocs(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("..", "..", "SPEC.md"))
 	if err != nil {
@@ -26,7 +26,7 @@ func TestRetentionDocs(t *testing.T) {
 	for _, want := range []string{
 		fmt.Sprintf("| Raw check retention | %d days |", days),
 		fmt.Sprintf("| Hourly summary retention | %d days |", days),
-		"| Daily summary retention | Forever |",
+		"| Incident retention | Forever |",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("SPEC 4.4 does not have the row %q", want)
