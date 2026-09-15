@@ -177,7 +177,7 @@ func TestRetainDeletesHourly(t *testing.T) {
 	seedChecks(t, s, a.ID, expired.Add(time.Hour), 60, true)
 	seedChecks(t, s, a.ID, cutoffDay.Add(13*time.Hour), 60, true)
 	seedChecks(t, s, a.ID, now.Add(-2*time.Hour), 60, true)
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO hourly (monitor_id, hour, total, ok) VALUES (?, ?, 60, 60)`,
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO hourly (monitor_id, hour, ok) VALUES (?, ?, 60)`,
 		b.ID, expired.Add(5*time.Hour).Unix()); err != nil {
 		t.Fatal(err)
 	}

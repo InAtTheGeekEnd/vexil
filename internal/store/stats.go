@@ -6,13 +6,12 @@ import (
 	"time"
 )
 
-// Bucket holds the checks of one monitor in one UTC hour.
+// Bucket holds the successful checks of one monitor in one UTC hour.
 type Bucket struct {
 	At         time.Time // start of the hour
-	Total      int
-	OK         int
-	LatencyMS  int64 // average latency of the successful checks
-	HasLatency bool  // false when no check in the hour succeeded
+	OK         int       // successful checks: the weight of LatencyMS
+	LatencyMS  int64     // average latency of the successful checks
+	HasLatency bool      // false when no check in the hour succeeded
 }
 
 // recentHoursQuery reads the hours of every monitor from ?1 on: the hourly
@@ -26,10 +25,10 @@ const recentHoursQuery = `
 	WITH rolled(until) AS (
 		SELECT COALESCE(MAX(hour) + 3600, ?1) FROM hourly
 		WHERE monitor_id IN (SELECT id FROM monitors) AND hour >= ?1)
-	SELECT monitor_id, hour, total, ok, avg_latency FROM hourly
+	SELECT monitor_id, hour, ok, avg_latency FROM hourly
 	WHERE monitor_id IN (SELECT id FROM monitors) AND hour >= ?1
 	UNION ALL
-	SELECT monitor_id, at / 3600 * 3600, COUNT(*), SUM(ok), AVG(CASE WHEN ok = 1 THEN latency_ms END)
+	SELECT monitor_id, at / 3600 * 3600, SUM(ok), AVG(CASE WHEN ok = 1 THEN latency_ms END)
 	FROM checks
 	WHERE monitor_id IN (SELECT id FROM monitors) AND at >= (SELECT until FROM rolled)
 	GROUP BY 1, 2
@@ -50,7 +49,7 @@ func (s *Store) RecentHours(ctx context.Context, since time.Time) (map[int64][]B
 		var id, at int64
 		var b Bucket
 		var avg sql.NullFloat64
-		if err := rows.Scan(&id, &at, &b.Total, &b.OK, &avg); err != nil {
+		if err := rows.Scan(&id, &at, &b.OK, &avg); err != nil {
 			return nil, err
 		}
 		b.At = time.Unix(at, 0)
@@ -66,9 +65,9 @@ func (s *Store) RecentHours(ctx context.Context, since time.Time) (map[int64][]B
 const monitorHoursQuery = `
 	WITH rolled(until) AS (
 		SELECT COALESCE(MAX(hour) + 3600, ?2) FROM hourly WHERE monitor_id = ?1 AND hour >= ?2)
-	SELECT hour, total, ok, avg_latency FROM hourly WHERE monitor_id = ?1 AND hour >= ?2
+	SELECT hour, ok, avg_latency FROM hourly WHERE monitor_id = ?1 AND hour >= ?2
 	UNION ALL
-	SELECT at / 3600 * 3600, COUNT(*), SUM(ok), AVG(CASE WHEN ok = 1 THEN latency_ms END) FROM checks
+	SELECT at / 3600 * 3600, SUM(ok), AVG(CASE WHEN ok = 1 THEN latency_ms END) FROM checks
 	WHERE monitor_id = ?1 AND at >= (SELECT until FROM rolled)
 	GROUP BY 1
 	ORDER BY 1`
@@ -88,7 +87,7 @@ func (s *Store) MonitorHours(ctx context.Context, monitorID int64, since time.Ti
 		var at int64
 		var b Bucket
 		var avg sql.NullFloat64
-		if err := rows.Scan(&at, &b.Total, &b.OK, &avg); err != nil {
+		if err := rows.Scan(&at, &b.OK, &avg); err != nil {
 			return nil, err
 		}
 		b.At = time.Unix(at, 0)
@@ -169,10 +168,9 @@ func latencyPoints(rows *sql.Rows) ([]LatencyPoint, error) {
 	return out, rows.Err()
 }
 
-// Summary counts the checks of a monitor since a time. AvgLatencyMS is the
-// average latency of the successful checks, or 0 when there is none.
+// Summary counts the successful checks of a monitor since a time.
+// AvgLatencyMS is their average latency, or 0 when there is none.
 type Summary struct {
-	Total        int
 	OK           int
 	AvgLatencyMS int64
 }
@@ -189,7 +187,6 @@ func (s *Store) Summary(ctx context.Context, monitorID int64, since time.Time) (
 	var sum float64
 	var n int
 	for _, h := range hours {
-		out.Total += h.Total
 		out.OK += h.OK
 		if h.HasLatency {
 			sum += float64(h.LatencyMS) * float64(h.OK)

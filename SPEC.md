@@ -178,7 +178,7 @@ All monitors have: **Name**, **Interval** (30s, 1m, 5m, 15m, 30m, 1h, 6h, 12h, 2
 | `DOWN` | 2 or more checks failed in a row. |
 | `PAUSED` | The user paused the monitor. No checks run. |
 
-Uptime is the time outside incidents, not a count of checks. A day's uptime is the seconds of the day not inside an incident, divided by the seconds the monitor was live that day. A monitor is live from its creation, except while it is paused: a paused period is not live. A day with no incident is 100%. A failed check that opened no incident counts nowhere. The 24 h, 7 d, 30 d and 90 d figures use the same rule over their windows, which end now. The `pauses` table records the paused periods. The `daily` and `hourly` rows keep their `ok` and `total` columns, but no uptime figure reads them. One function computes every uptime figure, and the dashboard, the monitor detail page and the public status page all call it.
+Uptime is the time outside incidents, not a count of checks. A day's uptime is the seconds of the day not inside an incident, divided by the seconds the monitor was live that day. A monitor is live from its creation, except while it is paused: a paused period is not live. A day with no incident is 100%. A failed check that opened no incident counts nowhere. The 24 h, 7 d, 30 d and 90 d figures use the same rule over their windows, which end now. The `pauses` table records the paused periods. No table counts checks: `hourly.ok` is the weight of the average latency, and no uptime figure reads it. One function computes every uptime figure, and the dashboard, the monitor detail page and the public status page all call it.
 
 ### 6.2 Transitions
 
@@ -330,9 +330,7 @@ CREATE INDEX checks_monitor_at ON checks(monitor_id, at, ok, latency_ms);  -- co
 CREATE TABLE daily (
   monitor_id  INTEGER NOT NULL,
   day         TEXT NOT NULL,          -- YYYY-MM-DD, UTC
-  total       INTEGER NOT NULL,
-  ok          INTEGER NOT NULL,
-  avg_latency INTEGER,
+  avg_latency INTEGER,                -- of the successful checks, weighted by the ok of each hour
   PRIMARY KEY (monitor_id, day),
   FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
 );
@@ -340,9 +338,8 @@ CREATE TABLE daily (
 CREATE TABLE hourly (
   monitor_id  INTEGER NOT NULL,
   hour        INTEGER NOT NULL,       -- unix seconds, on the hour, UTC
-  total       INTEGER NOT NULL,
-  ok          INTEGER NOT NULL,
-  avg_latency INTEGER,
+  ok          INTEGER NOT NULL,       -- successful checks: the weight of avg_latency, not an uptime figure
+  avg_latency INTEGER,                -- of the successful checks
   PRIMARY KEY (monitor_id, hour),
   FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
 );
