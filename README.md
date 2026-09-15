@@ -28,19 +28,26 @@ The dashboard on a phone:
 
 ## Quick start
 
-Download a binary from the [releases page](https://github.com/InAtTheGeekEnd/vexil/releases) and run it:
+Download the archive for your system from the [releases page](https://github.com/InAtTheGeekEnd/vexil/releases), extract it, and run the binary:
 
 ```
+tar -xzf vexil_*_linux_amd64.tar.gz
 ./vexil
 ```
 
-Or build it from source:
+On Windows, unzip the archive and run `vexil.exe`.
+
+Or build it from source. You need Go 1.27 or later:
 
 ```
+git clone https://github.com/InAtTheGeekEnd/vexil.git
+cd vexil
 go run ./cmd/vexil
 ```
 
 Open http://localhost:8080. On the first visit vexil asks you to set the admin password.
+
+vexil creates a `data` folder in the current directory. It holds the database and any uploaded logo.
 
 ### Docker
 
@@ -63,7 +70,7 @@ services:
     volumes:
       - vexil-data:/data
     environment:
-      VEXIL_BASE_URL: https://status.example.com
+      VEXIL_BASE_URL: https://vexil.example.com
     sysctls:
       net.ipv4.ping_group_range: "0 2147483647"
     restart: unless-stopped
@@ -75,6 +82,15 @@ volumes:
 The image has a `HEALTHCHECK` that runs `vexil healthcheck`. It calls `/readyz` and exits with 0 or 1.
 
 ### systemd
+
+Create a system user, put the binary in place, and install the unit:
+
+```
+useradd --system --no-create-home --shell /usr/sbin/nologin vexil
+install -m 755 vexil /usr/local/bin/vexil
+```
+
+`/etc/systemd/system/vexil.service`:
 
 ```ini
 [Unit]
@@ -88,7 +104,7 @@ Group=vexil
 ExecStart=/usr/local/bin/vexil
 Environment=VEXIL_ADDR=127.0.0.1:8080
 Environment=VEXIL_DATA=/var/lib/vexil
-Environment=VEXIL_BASE_URL=https://status.example.com
+Environment=VEXIL_BASE_URL=https://vexil.example.com
 StateDirectory=vexil
 Restart=on-failure
 NoNewPrivileges=true
@@ -97,6 +113,16 @@ ProtectHome=true
 
 [Install]
 WantedBy=multi-user.target
+```
+
+```
+systemctl enable --now vexil
+```
+
+`StateDirectory` creates `/var/lib/vexil` with the right owner. The `vexil backup` and `vexil reset-password` commands open the data folder too, so give them the same `VEXIL_DATA` when you run them from a shell:
+
+```
+VEXIL_DATA=/var/lib/vexil vexil reset-password
 ```
 
 ### Kubernetes
@@ -114,7 +140,7 @@ readinessProbe:
     port: 8080
 ```
 
-### Settings
+## Configuration
 
 vexil has three environment variables. Everything else is set in the UI.
 
@@ -124,6 +150,8 @@ vexil has three environment variables. Everything else is set in the UI.
 | `VEXIL_DATA` | `./data` | The folder for the SQLite file and uploads. |
 | `VEXIL_BASE_URL` | empty | The public URL. vexil uses it in notification links. |
 
+Set `VEXIL_BASE_URL` to the admin domain, because links in alerts open admin pages.
+
 ### Ping monitors
 
 vexil uses unprivileged ICMP (UDP) ping. On Linux the kernel must allow it for the group that runs vexil:
@@ -132,7 +160,7 @@ vexil uses unprivileged ICMP (UDP) ping. On Linux the kernel must allow it for t
 sysctl -w net.ipv4.ping_group_range="0 2147483647"
 ```
 
-In Docker add `--sysctl net.ipv4.ping_group_range="0 2147483647"` to `docker run`. For systemd put the sysctl in `/etc/sysctl.d/`.
+In Docker add `--sysctl net.ipv4.ping_group_range="0 2147483647"` to `docker run`. For systemd put the line `net.ipv4.ping_group_range = 0 2147483647` in a file under `/etc/sysctl.d/`.
 
 ### Use HTTPS for real installs
 
@@ -142,13 +170,13 @@ HTTPS also enables HTTP/2. Every open vexil tab keeps one live connection for up
 
 Plain HTTP is acceptable on a trusted private network, for example at home or over Tailscale.
 
-### Public status page and custom domain
+## Public status page and custom domain
 
 The status page is at `/status`. It shows the monitors that have **Show on status page** on. A group shows as a heading only when at least one of its monitors is public, so a group with only private monitors does not appear at all. Every public monitor also has a badge at `/badge/{id}.svg`; the monitor page shows the URL.
 
 There are two ways to put vexil on a domain.
 
-#### Setup A: one domain for everything
+### Setup A: one domain for everything
 
 `vexil.example.com` serves the admin pages and the status page at `/status`.
 
@@ -183,7 +211,7 @@ server {
 }
 ```
 
-#### Setup B: a separate status domain
+### Setup B: a separate status domain
 
 `vexil.example.com` serves the admin pages. `status.example.com` serves only the public paths: `/` shows `/status`, and `/status`, `/badge/*`, `/brand/*`, `/static/*` and `/push/*` pass through. Every other path redirects to `/`.
 
@@ -254,15 +282,24 @@ vexil.example.com {
 }
 ```
 
-Settings has the brand: the name, the logo, the accent color and the "Powered by" line.
+## Brand
+
+Settings has the brand: the name, the logo, the accent color and the "Powered by" line. A white-label install can replace every visible trace of the vexil name there.
+
 An uploaded SVG logo does not appear on the iOS home screen icon. Upload a PNG if you want your own logo there.
 
-### Backup
+## Backup
 
 Run the backup command. It writes one consistent copy of the database to a new file, and it works while vexil runs. It does not overwrite a file.
 
 ```
 vexil backup /var/backups/vexil-backup.db
+```
+
+With the systemd unit above:
+
+```
+VEXIL_DATA=/var/lib/vexil vexil backup /var/backups/vexil-backup.db
 ```
 
 Docker:
@@ -274,16 +311,22 @@ docker cp vexil:/data/backup.db ./vexil-backup.db
 
 Copy the backup file off the server. Do not copy the live data folder: the database runs in WAL mode, and a copy of the files while vexil writes can be broken.
 
-To restore, stop vexil, delete `vexil.db`, `vexil.db-wal` and `vexil.db-shm` from the data folder, and put the backup file there as `vexil.db`.
+To restore, stop vexil, delete `vexil.db`, `vexil.db-wal` and `vexil.db-shm` from the data folder, and put the backup file there as `vexil.db`. With systemd, run `chown vexil:vexil /var/lib/vexil/vexil.db` before you start it again.
 
 The database holds everything. Raw check results are kept for 30 days. Incidents are kept forever.
 
-### Forgot your password?
+## Forgot your password?
 
 Run this on the server. It works while vexil runs and logs out every browser.
 
 ```
 vexil reset-password
+```
+
+With the systemd unit above:
+
+```
+VEXIL_DATA=/var/lib/vexil vexil reset-password
 ```
 
 Docker:
@@ -293,6 +336,8 @@ docker exec -it vexil vexil reset-password
 ```
 
 ## Development
+
+You need Go 1.27 or later.
 
 ```
 go build ./cmd/vexil        # build
