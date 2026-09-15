@@ -26,6 +26,18 @@ func uptime(from, to time.Time, m store.Monitor, incidents []store.Incident, pau
 	if live <= 0 {
 		return 0, false
 	}
+	down := downtime(from, to, incidents, pauses)
+	if down <= 0 {
+		// Exactly 100, not a float64 division that can land a hair under
+		// it: a window with no incident is always green.
+		return 100, true
+	}
+	return float64(live-down) * 100 / float64(live), true
+}
+
+// downtime is the time inside incidents between from and to, less the time
+// paused.
+func downtime(from, to time.Time, incidents []store.Incident, pauses []store.Pause) time.Duration {
 	var down time.Duration
 	for _, inc := range incidents {
 		start, stop := clip(from, to, inc.StartedAt, end(inc.EndedAt, to))
@@ -35,7 +47,7 @@ func uptime(from, to time.Time, m store.Monitor, incidents []store.Incident, pau
 		}
 		down += d
 	}
-	return float64(live-down) * 100 / float64(live), true
+	return down
 }
 
 // uptimeDays builds the segments of an uptime bar: one per UTC day from

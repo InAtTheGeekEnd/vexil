@@ -51,6 +51,9 @@ func TestUptime(t *testing.T) {
 		{"the monitor is live from its creation", day, now, store.Monitor{CreatedAt: now.Add(-4 * time.Hour)}, []store.Incident{inc(-6*time.Hour, -3*time.Hour)}, nil, 75, true},
 		{"a window before the creation has no data", day.AddDate(0, 0, -1), day, store.Monitor{CreatedAt: now.Add(-4 * time.Hour)}, nil, nil, 0, false},
 		{"an incident of a second in a day", day, day.AddDate(0, 0, 1), old, []store.Incident{inc(-6*time.Hour, -6*time.Hour+time.Second)}, nil, float64(86399) * 100 / 86400, true},
+		// 78 days and 1 ns of live time, no incident: exactly 100, not a
+		// float64 hair under it.
+		{"no incident is exactly 100 for any window", now.Add(-78*24*time.Hour - time.Nanosecond), now, old, nil, nil, 100, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -58,7 +61,15 @@ func TestUptime(t *testing.T) {
 			if ok != tc.ok || got < tc.want-1e-9 || got > tc.want+1e-9 {
 				t.Errorf("uptime = %v, %v; want %v, %v", got, ok, tc.want, tc.ok)
 			}
+			if tc.want == 100 && got != 100 {
+				t.Errorf("uptime = %v, want exactly 100", got)
+			}
 		})
+	}
+	for p, want := range map[float64]string{100: "100", 99.99: "99.99", 99.999: "99.99", 95: "95", 94.999: "94.99", 100 - 1e-12: "100", 87.2: "87.2"} {
+		if got := formatPercent(p); got != want {
+			t.Errorf("formatPercent(%v) = %q, want %q", p, got, want)
+		}
 	}
 
 	// The segments: one per UTC day, with the incidents that touched it.
