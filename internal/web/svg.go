@@ -151,7 +151,10 @@ type uptimeDay struct {
 	HasData   bool
 }
 
-// Class returns the CSS class for the segment color.
+// Class returns the CSS class for the segment color: --up at 100, --warn
+// from 95 to 99.99, --down below 95, --border without data. The percentage
+// is the one the tooltip shows, so a day with any incident time is never
+// green.
 func (d uptimeDay) Class() string {
 	switch {
 	case !d.HasData:
@@ -177,9 +180,11 @@ func (d uptimeDay) Tip() string {
 	return fmt.Sprintf("%s\n%s%% uptime · %d %s", d.Day, formatPercent(d.Percent), d.Incidents, inc)
 }
 
-// formatPercent prints 100, 99.9, 99.95 or 87.2 without trailing zeros.
+// formatPercent prints 100, 99.9, 99.95 or 87.2 without trailing zeros. It
+// cuts, not rounds, so 99.999 prints as 99.99: only a full 100 prints as
+// 100, and the colour of a segment or tile agrees with its number.
 func formatPercent(p float64) string {
-	s := fmt.Sprintf("%.2f", p)
+	s := fmt.Sprintf("%.2f", math.Floor(p*100)/100)
 	s = strings.TrimRight(s, "0")
 	return strings.TrimSuffix(s, ".")
 }
