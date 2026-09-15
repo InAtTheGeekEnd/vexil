@@ -196,9 +196,7 @@ func TestEventsEndWhenSessionEnds(t *testing.T) {
 		t.Fatalf("line = %q, want a heartbeat while the session is valid", line)
 	}
 
-	if err := st.DeleteAllSessions(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	setPassword(t, st) // a password change ends every session
 	done := make(chan error, 1)
 	go func() {
 		for {
@@ -227,11 +225,9 @@ func TestEventsNeedLogin(t *testing.T) {
 		t.Fatalf("anonymous /events = %d, want 401", res.StatusCode)
 	}
 
-	// A session that ends, as on logout or a password change, gets 401 too.
+	// A session that ends, as on a password change, gets 401 too.
 	ts2, c := loggedIn(t, s, st)
-	if err := st.DeleteAllSessions(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	setPassword(t, st)
 	if res := get(t, c, ts2.URL+"/events"); res.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("/events after the session ended = %d, want 401", res.StatusCode)
 	}

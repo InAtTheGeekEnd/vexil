@@ -78,7 +78,6 @@ func TestStaleWhenSessionEndsInChrome(t *testing.T) {
 	path := requireChrome(t)
 	s, st, _ := seedServer(t, seed{name: "Alpha"})
 	setPassword(t, st)
-	ctx := context.Background()
 
 	// The wrapper adds the current session to each request, can end every
 	// open stream as a lost connection would, and counts refused streams.
@@ -134,9 +133,7 @@ func TestStaleWhenSessionEndsInChrome(t *testing.T) {
 		t.Fatal("the page is stale while its stream is open")
 	}
 
-	if err := st.DeleteAllSessions(ctx); err != nil {
-		t.Fatal(err)
-	}
+	setPassword(t, st) // a password change ends every session
 	mu.Lock()
 	close(drop)
 	drop = make(chan struct{})

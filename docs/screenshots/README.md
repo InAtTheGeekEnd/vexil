@@ -2,7 +2,7 @@
 
 The four screenshots come from a seeded demo database, so they can be retaken after a UI change.
 
-`seed.py` fills a database with seven monitors, 30 days of raw checks, 60 more days of daily totals and a few incidents, all relative to the time it runs. `shoot.py` logs in, takes the four shots at 2x with headless Chromium and shrinks them to 256 colors. `acme.svg` is the logo for the status page shot.
+`seed.py` fills a database with seven monitors, 30 days of raw checks and a few incidents, all relative to the time it runs. `shoot.py` logs in, takes the four shots at 2x with headless Chromium and shrinks them to 256 colors. `acme.svg` is the logo for the status page shot.
 
 Needs Python 3 with `playwright` and `pillow`:
 

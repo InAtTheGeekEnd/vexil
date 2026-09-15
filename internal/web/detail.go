@@ -190,7 +190,7 @@ func tiles(m store.Monitor, st engine.Status, day store.Summary, incidents []sto
 	}
 	if m.Type != store.TypePush {
 		t := statTile{Label: "Avg response"}
-		if day.OK > 0 {
+		if day.Samples > 0 {
 			t.Value, t.Unit = fmt.Sprint(day.AvgLatencyMS), "ms"
 		}
 		out = append(out, t)

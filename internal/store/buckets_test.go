@@ -23,7 +23,7 @@ func TestRecentHours(t *testing.T) {
 	type hourlyRow struct {
 		monitor int // index into the two monitors
 		hour    time.Time
-		ok      int
+		samples int
 		avg     any // nil when no check succeeded
 	}
 	tests := []struct {
@@ -50,9 +50,9 @@ func TestRecentHours(t *testing.T) {
 			},
 			want: [2][]Bucket{
 				{
-					{At: at(-5 * time.Hour), OK: 59, LatencyMS: 120, HasLatency: true},
-					{At: at(-time.Hour), OK: 2, LatencyMS: 151, HasLatency: true},
-					{At: at(0), OK: 1, LatencyMS: 50, HasLatency: true},
+					{At: at(-5 * time.Hour), Samples: 59, LatencyMS: 120, HasLatency: true},
+					{At: at(-time.Hour), Samples: 2, LatencyMS: 151, HasLatency: true},
+					{At: at(0), Samples: 1, LatencyMS: 50, HasLatency: true},
 				},
 				{
 					{At: at(-2 * time.Hour)},
@@ -69,8 +69,8 @@ func TestRecentHours(t *testing.T) {
 			},
 			want: [2][]Bucket{
 				{
-					{At: at(-3 * time.Hour), OK: 1, LatencyMS: 100, HasLatency: true},
-					{At: at(0), OK: 1, LatencyMS: 300, HasLatency: true},
+					{At: at(-3 * time.Hour), Samples: 1, LatencyMS: 100, HasLatency: true},
+					{At: at(0), Samples: 1, LatencyMS: 300, HasLatency: true},
 				},
 			},
 		},
@@ -88,8 +88,8 @@ func TestRecentHours(t *testing.T) {
 				ids[i] = m.ID
 			}
 			for _, r := range tc.rows {
-				if _, err := s.db.ExecContext(ctx, `INSERT INTO hourly (monitor_id, hour, ok, avg_latency) VALUES (?, ?, ?, ?)`,
-					ids[r.monitor], r.hour.Unix(), r.ok, r.avg); err != nil {
+				if _, err := s.db.ExecContext(ctx, `INSERT INTO hourly (monitor_id, hour, samples, avg_latency) VALUES (?, ?, ?, ?)`,
+					ids[r.monitor], r.hour.Unix(), r.samples, r.avg); err != nil {
 					t.Fatal(err)
 				}
 			}

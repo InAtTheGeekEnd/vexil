@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"log/slog"
 	"time"
 )
@@ -19,16 +18,10 @@ const retentionBatch = 500
 // group of check rows, rounded to a whole millisecond.
 const checksAvgLatency = `CAST(ROUND(AVG(CASE WHEN ok = 1 THEN latency_ms END)) AS INTEGER)`
 
-// hourlyAvgLatency is the same average for a group of hourly rows: the
-// average of each hour, weighted by the successful checks of the hour.
-const hourlyAvgLatency = `CAST(ROUND(SUM(avg_latency * ok) * 1.0 / SUM(CASE WHEN avg_latency IS NOT NULL THEN ok END)) AS INTEGER)`
-
-// Retain rolls raw checks older than RawRetention into the hourly and daily
-// tables and deletes them. It works on whole UTC days that ended before the
-// cutoff, oldest first, one day of one monitor at a time. The hourly and
-// daily rows are written first. Then the checks of that day go in batches
-// of batch rows. Last, the hourly rows before the cutoff go. It returns the
-// number of deleted check rows.
+// Retain deletes the raw checks of the whole UTC days that ended before
+// RawRetention ago, in batches of batch rows, one monitor at a time so
+// every statement searches the index of the checks. Then the hourly rows
+// before the cutoff go. It returns the number of deleted check rows.
 func (s *Store) Retain(ctx context.Context, now time.Time, batch int) (int64, error) {
 	c := now.UTC().Add(-RawRetention)
 	cutoff := time.Date(c.Year(), c.Month(), c.Day(), 0, 0, 0, 0, time.UTC)
@@ -43,20 +36,20 @@ func (s *Store) Retain(ctx context.Context, now time.Time, batch int) (int64, er
 			if err := ctx.Err(); err != nil {
 				return deleted, err
 			}
-			day, ok, err := s.oldestDay(ctx, id)
+			res, err := s.db.ExecContext(ctx, `
+				DELETE FROM checks WHERE rowid IN (
+					SELECT rowid FROM checks WHERE monitor_id = ? AND at < ? LIMIT ?)`,
+				id, cutoff.Unix(), batch)
 			if err != nil {
 				return deleted, err
 			}
-			if !ok || !day.Before(cutoff) {
-				break
-			}
-			if err := s.rollupDay(ctx, id, day); err != nil {
+			n, err := res.RowsAffected()
+			if err != nil {
 				return deleted, err
 			}
-			n, err := s.deleteDay(ctx, id, day, batch)
 			deleted += n
-			if err != nil {
-				return deleted, err
+			if n < int64(batch) {
+				break
 			}
 		}
 	}
@@ -87,77 +80,9 @@ func (s *Store) monitorsWithChecks(ctx context.Context) ([]int64, error) {
 	return ids, rows.Err()
 }
 
-// oldestDay returns the UTC day of the oldest check of a monitor.
-func (s *Store) oldestDay(ctx context.Context, monitorID int64) (time.Time, bool, error) {
-	var min sql.NullInt64
-	if err := s.db.QueryRowContext(ctx, `SELECT MIN(at) FROM checks WHERE monitor_id = ?`, monitorID).Scan(&min); err != nil {
-		return time.Time{}, false, err
-	}
-	if !min.Valid {
-		return time.Time{}, false, nil
-	}
-	t := time.Unix(min.Int64, 0).UTC()
-	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC), true, nil
-}
-
-// rollupDay writes the daily row for one monitor and day from its hourly
-// rows. First each hour of the day without a row gets one from the raw
-// checks, as a day before the fill window has none. Existing rows are kept:
-// they were written by the job or by an earlier run that did not finish
-// deleting, and they are complete while the checks may not be.
-func (s *Store) rollupDay(ctx context.Context, monitorID int64, day time.Time) error {
-	end := day.Add(24 * time.Hour)
-	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO hourly (monitor_id, hour, ok, avg_latency)
-		SELECT ?1, at / 3600 * 3600, SUM(ok), `+checksAvgLatency+`
-		FROM checks WHERE monitor_id = ?1 AND at >= ?2 AND at < ?3
-		GROUP BY 2
-		ON CONFLICT(monitor_id, hour) DO NOTHING`,
-		monitorID, day.Unix(), end.Unix()); err != nil {
-		return err
-	}
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO daily (monitor_id, day, avg_latency)
-		SELECT monitor_id, ?2, `+hourlyAvgLatency+`
-		FROM hourly WHERE monitor_id = ?1 AND hour >= ?3 AND hour < ?4
-		GROUP BY monitor_id
-		ON CONFLICT(monitor_id, day) DO NOTHING`,
-		monitorID, day.Format("2006-01-02"), day.Unix(), end.Unix())
-	return err
-}
-
-// deleteDay removes the checks of one monitor and day in batches.
-func (s *Store) deleteDay(ctx context.Context, monitorID int64, day time.Time, batch int) (int64, error) {
-	var deleted int64
-	for {
-		if err := ctx.Err(); err != nil {
-			return deleted, err
-		}
-		res, err := s.db.ExecContext(ctx, `
-			DELETE FROM checks WHERE rowid IN (
-				SELECT rowid FROM checks WHERE monitor_id = ? AND at >= ? AND at < ? LIMIT ?)`,
-			monitorID, day.Unix(), day.Add(24*time.Hour).Unix(), batch)
-		if err != nil {
-			return deleted, err
-		}
-		n, err := res.RowsAffected()
-		if err != nil {
-			return deleted, err
-		}
-		deleted += n
-		if n < int64(batch) {
-			return deleted, nil
-		}
-	}
-}
-
-// Rollup writes the hourly rows of recent hours and then the daily rows of
-// recent days from them.
+// Rollup writes the hourly rows of recent hours.
 func (s *Store) Rollup(ctx context.Context, now time.Time) error {
-	if err := s.rollupHours(ctx, now); err != nil {
-		return err
-	}
-	return s.rollupDays(ctx, now)
+	return s.rollupHours(ctx, now)
 }
 
 // rollupHours writes the hourly rows of the finished UTC hours in the 30
@@ -181,57 +106,22 @@ func (s *Store) rollupHours(ctx context.Context, now time.Time) error {
 // costs one primary key lookup per monitor.
 func (s *Store) rollupHour(ctx context.Context, hour time.Time, replace bool) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO hourly (monitor_id, hour, ok, avg_latency)
+		INSERT INTO hourly (monitor_id, hour, samples, avg_latency)
 		SELECT monitor_id, ?1, SUM(ok), `+checksAvgLatency+`
 		FROM checks
 		WHERE monitor_id IN (SELECT id FROM monitors WHERE ?3 OR NOT EXISTS (
 				SELECT 1 FROM hourly WHERE hourly.monitor_id = monitors.id AND hourly.hour = ?1))
 			AND at >= ?1 AND at < ?2
 		GROUP BY monitor_id
-		ON CONFLICT(monitor_id, hour) DO UPDATE SET ok = excluded.ok, avg_latency = excluded.avg_latency`,
+		ON CONFLICT(monitor_id, hour) DO UPDATE SET samples = excluded.samples, avg_latency = excluded.avg_latency`,
 		hour.Unix(), hour.Add(time.Hour).Unix(), replace)
 	return err
 }
 
-// rollupDays writes the daily rows of the complete UTC days in the 30 days
-// before now from the hourly rows. It rewrites yesterday, whose last hour
-// can be rewritten after an earlier run, and fills each older day that has
-// no row yet, as after a downtime. Today gets no row: it is not complete.
-func (s *Store) rollupDays(ctx context.Context, now time.Time) error {
-	today := now.UTC().Truncate(24 * time.Hour)
-	yesterday := today.AddDate(0, 0, -1)
-	if err := s.rollupAll(ctx, yesterday, true); err != nil {
-		return err
-	}
-	for day := today.AddDate(0, 0, -29); day.Before(yesterday); day = day.AddDate(0, 0, 1) {
-		if err := s.rollupAll(ctx, day, false); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// rollupAll writes the daily rows of one UTC day for every monitor with
-// hourly rows on it, in one statement. With replace it rewrites the existing
-// rows. Without replace it writes only the missing rows, so a filled day
-// costs almost nothing.
-func (s *Store) rollupAll(ctx context.Context, day time.Time, replace bool) error {
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO daily (monitor_id, day, avg_latency)
-		SELECT monitor_id, ?1, `+hourlyAvgLatency+`
-		FROM hourly
-		WHERE monitor_id IN (SELECT id FROM monitors WHERE ?2 OR id NOT IN (SELECT monitor_id FROM daily WHERE day = ?1))
-			AND hour >= ?3 AND hour < ?4
-		GROUP BY monitor_id
-		ON CONFLICT(monitor_id, day) DO UPDATE SET avg_latency = excluded.avg_latency`,
-		day.Format("2006-01-02"), replace, day.Unix(), day.Add(24*time.Hour).Unix())
-	return err
-}
-
 // nextRun returns the wait until the next run of the hourly job: 30 seconds
-// after the next full UTC hour, so the hour that ended gets its rows soon,
-// and after midnight the day too. A check takes at most 10 seconds, so
-// the checks of the hour are in by then.
+// after the next full UTC hour, so the hour that ended gets its rows soon.
+// A check takes at most 10 seconds, so the checks of the hour are in by
+// then.
 func nextRun(now time.Time) time.Duration {
 	next := now.UTC().Truncate(time.Hour).Add(30 * time.Second)
 	if !next.After(now) {
@@ -240,8 +130,8 @@ func nextRun(now time.Time) time.Duration {
 	return next.Sub(now)
 }
 
-// RunRetention deletes expired sessions, writes the hourly and daily rows of
-// recent hours and days and runs Retain, at once and then 30 seconds after
+// RunRetention deletes expired sessions, writes the hourly rows of recent
+// hours and runs Retain, at once and then 30 seconds after
 // every full UTC hour, until ctx ends. The returned channel closes when the
 // job has stopped.
 func (s *Store) RunRetention(ctx context.Context, log *slog.Logger) <-chan struct{} {

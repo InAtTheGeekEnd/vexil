@@ -119,7 +119,7 @@ Only a person with access to the server can reset the password. This is the secu
 | TLS certificate warning | 14 days before expiry, one alert |
 | Raw check retention | 30 days |
 | Hourly summary retention | 30 days |
-| Daily summary retention | Forever |
+| Incident retention | Forever |
 | Concurrent checks | 50 at the same time |
 
 ---
@@ -178,7 +178,7 @@ All monitors have: **Name**, **Interval** (30s, 1m, 5m, 15m, 30m, 1h, 6h, 12h, 2
 | `DOWN` | 2 or more checks failed in a row. |
 | `PAUSED` | The user paused the monitor. No checks run. |
 
-Uptime is the time outside incidents, not a count of checks. A day's uptime is the seconds of the day not inside an incident, divided by the seconds the monitor was live that day. A monitor is live from its creation, except while it is paused: a paused period is not live. A day with no incident is 100%. A failed check that opened no incident counts nowhere. The 24 h, 7 d, 30 d and 90 d figures use the same rule over their windows, which end now. The `pauses` table records the paused periods. No table counts checks: `hourly.ok` is the weight of the average latency, and no uptime figure reads it. One function computes every uptime figure, and the dashboard, the monitor detail page and the public status page all call it.
+Uptime is the time outside incidents, not a count of checks. A day's uptime is the seconds of the day not inside an incident, divided by the seconds the monitor was live that day. A monitor is live from its creation, except while it is paused: a paused period is not live. A day with no incident is 100%. A failed check that opened no incident counts nowhere. The 24 h, 7 d, 30 d and 90 d figures use the same rule over their windows, which end now. The `pauses` table records the paused periods. No table counts checks: `hourly.samples` is the weight of the average latency, and no uptime figure reads it. One function computes every uptime figure, and the dashboard, the monitor detail page and the public status page all call it.
 
 ### 6.2 Transitions
 
@@ -327,18 +327,10 @@ CREATE TABLE checks (
 );
 CREATE INDEX checks_monitor_at ON checks(monitor_id, at, ok, latency_ms);  -- covering: stats read ok and latency from the index
 
-CREATE TABLE daily (
-  monitor_id  INTEGER NOT NULL,
-  day         TEXT NOT NULL,          -- YYYY-MM-DD, UTC
-  avg_latency INTEGER,                -- of the successful checks, weighted by the ok of each hour
-  PRIMARY KEY (monitor_id, day),
-  FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
-);
-
 CREATE TABLE hourly (
   monitor_id  INTEGER NOT NULL,
   hour        INTEGER NOT NULL,       -- unix seconds, on the hour, UTC
-  ok          INTEGER NOT NULL,       -- successful checks: the weight of avg_latency, not an uptime figure
+  samples     INTEGER NOT NULL,       -- successful checks behind avg_latency: its weight, not an uptime figure
   avg_latency INTEGER,                -- of the successful checks
   PRIMARY KEY (monitor_id, hour),
   FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
@@ -383,9 +375,9 @@ CREATE TABLE settings (
 ```
 
 - Use WAL mode.
-- Open every connection with `PRAGMA foreign_keys = ON`, so a deleted monitor takes its checks, hourly rows, daily rows, incidents and pauses with it.
+- Open every connection with `PRAGMA foreign_keys = ON`, so a deleted monitor takes its checks, hourly rows, incidents and pauses with it.
 - Migrations: numbered `.sql` files in `internal/store/migrations`, embedded, run at startup.
-- A background job runs 30 seconds after every full hour. It writes the `hourly` rows of the hours that have finished and fills any missing hour of the last 30 days. It builds `daily` from `hourly`, not from `checks`. It deletes `checks` and `hourly` rows older than 30 days.
+- A background job runs 30 seconds after every full hour. It writes the `hourly` rows of the hours that have finished and fills any missing hour of the last 30 days. It deletes `checks` and `hourly` rows older than 30 days. Incidents are kept forever: the uptime bars read them.
 - The 24-hour sparkline and the 7-day and 30-day response charts read `hourly`. An hour without a row yet, as the current hour, comes from `checks`.
 - Backup: the user runs `vexil backup <path>` and copies that file. Copying the live data folder can corrupt the copy, because the database runs in WAL mode.
 

@@ -42,8 +42,7 @@ func TestRollupColumns(t *testing.T) {
 		table string
 		want  []string
 	}{
-		{"daily", []string{"monitor_id", "day", "avg_latency"}},
-		{"hourly", []string{"monitor_id", "hour", "ok", "avg_latency"}},
+		{"hourly", []string{"monitor_id", "hour", "samples", "avg_latency"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.table, func(t *testing.T) {
@@ -67,10 +66,22 @@ func TestRollupColumns(t *testing.T) {
 	}
 }
 
+// TestDailyTableDropped checks that migration 006 removed the daily table:
+// no page reads it, and Retain writes nothing for the days it deletes.
+func TestDailyTableDropped(t *testing.T) {
+	s := openTest(t)
+	var n int
+	err := s.db.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'daily'`).Scan(&n)
+	if err != nil || n != 0 {
+		t.Fatalf("daily table exists: n=%d err=%v", n, err)
+	}
+}
+
 func TestMigrationsCreateTables(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
-	tables := []string{"monitors", "monitor_groups", "checks", "hourly", "daily", "incidents", "pauses", "channels", "sessions", "settings", "schema_migrations"}
+	tables := []string{"monitors", "monitor_groups", "checks", "hourly", "incidents", "pauses", "channels", "sessions", "settings", "schema_migrations"}
 	for _, tbl := range tables {
 		t.Run(tbl, func(t *testing.T) {
 			var n int
@@ -114,15 +125,47 @@ func TestSettings(t *testing.T) {
 	if _, err := s.GetSetting(ctx, "missing"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing key: err = %v, want ErrNotFound", err)
 	}
-	if err := s.SetSetting(ctx, "k", "v1"); err != nil {
+	if err := s.SetSettings(ctx, map[string]string{"k": "v1"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetSetting(ctx, "k", "v2"); err != nil {
+	if err := s.SetSettings(ctx, map[string]string{"k": "v2"}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.GetSetting(ctx, "k")
 	if err != nil || got != "v2" {
 		t.Fatalf("GetSetting = %q, %v; want v2", got, err)
+	}
+}
+
+// TestPasswordChangeKeepsOneSession is the Settings page path of SPEC 13:
+// a password change deletes every session except the one that changed it.
+// vexil reset-password keeps none.
+func TestPasswordChangeKeepsOneSession(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	now := time.Now()
+	for _, h := range []string{"mine", "other"} {
+		if err := s.CreateSession(ctx, h, now, now.Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.SetPasswordHash(ctx, "hash", "mine"); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		hash string
+		want bool
+	}{{"mine", true}, {"other", false}}
+	for _, tc := range tests {
+		if ok, err := s.SessionValid(ctx, tc.hash, now); err != nil || ok != tc.want {
+			t.Errorf("SessionValid(%q) after the change = %v, %v; want %v", tc.hash, ok, err, tc.want)
+		}
+	}
+	if err := s.SetPasswordHash(ctx, "hash", ""); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := s.SessionValid(ctx, "mine", now); ok {
+		t.Error("session survived a reset without a kept token")
 	}
 }
 

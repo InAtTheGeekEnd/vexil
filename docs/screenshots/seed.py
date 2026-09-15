@@ -1,7 +1,6 @@
 """Seed a demo database for the README screenshots.
 
-Seven monitors, 30 days of raw checks plus 60 more days in the daily table,
-a handful of past incidents, and Postgres down right now. Five monitors are
+Seven monitors, 30 days of raw checks, a handful of past incidents, and Postgres down right now. Five monitors are
 in two groups. Mail and Nightly backup are in no group, so the shots show
 the monitors below the groups. Each group has a public monitor, so its
 heading shows on the status page too. The Website monitor's last check is
@@ -50,7 +49,7 @@ incidents = [
 
 con = sqlite3.connect(db)
 con.execute("PRAGMA journal_mode=WAL")
-for t in ("monitors", "monitor_groups", "checks", "daily", "incidents"):
+for t in ("monitors", "monitor_groups", "checks", "incidents"):
     con.execute(f"DELETE FROM {t}")
 
 # Positions count from 1 inside each group, and from 1 among the monitors in
@@ -109,23 +108,9 @@ for mi, (name, typ, target, iv, pub, age, base, jitter, last_age) in enumerate(m
                 rows.append((mid, t, 1, int(lat + random.uniform(-jitter / 3, jitter / 3)), 200 if typ == "http" else None, None))
             t -= step
     con.executemany("INSERT INTO checks (monitor_id, at, ok, latency_ms, status_code, error) VALUES (?,?,?,?,?,?)", rows)
-    # Older days go in the daily table.
-    first_raw = max(start, now - RAW_DAYS * DAY)
-    d = datetime.utcfromtimestamp(start).replace(hour=0, minute=0, second=0)
-    while d.timestamp() < first_raw:
-        day0 = int(d.timestamp())
-        if typ == "push":
-            total, ok = 1, 1
-        else:
-            total = DAY // 60
-            down = sum(max(0, min(e, day0 + DAY) - max(s, day0)) for s, e, *_ in wins) // 60
-            ok = total - down
-        con.execute("INSERT OR REPLACE INTO daily (monitor_id, day, total, ok, avg_latency) VALUES (?,?,?,?,?)",
-                    (mid, d.strftime("%Y-%m-%d"), total, ok, base))
-        d += timedelta(days=1)
 
 for m, start, minutes, reason, code in incidents:
     con.execute("INSERT INTO incidents (monitor_id, started_at, ended_at, reason) VALUES (?,?,?,?)",
                 (ids[m], start, None if minutes is None else start + minutes * 60, reason))
 con.commit()
-print("checks:", con.execute("SELECT COUNT(*) FROM checks").fetchone()[0], "daily:", con.execute("SELECT COUNT(*) FROM daily").fetchone()[0])
+print("checks:", con.execute("SELECT COUNT(*) FROM checks").fetchone()[0])
