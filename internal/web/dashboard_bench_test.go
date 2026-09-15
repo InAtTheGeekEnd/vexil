@@ -18,8 +18,8 @@ import (
 )
 
 // benchServer builds a server whose store holds 100 monitors with 30 days of
-// checks at the given interval in seconds, and the hourly and daily rows
-// that the job writes. It returns the monitor ids and a function that serves
+// checks at the given interval in seconds, an incident a day, and the
+// hourly and daily rows that the job writes. It returns the monitor ids and a function that serves
 // one logged-in GET request. The engine is not started, so no check runs
 // during the benchmark.
 func benchServer(b *testing.B, interval int) ([]int64, func(path string)) {
@@ -62,6 +62,15 @@ func benchServer(b *testing.B, interval int) ([]int64, func(path string)) {
 			FROM n`, rows, id, now, interval); err != nil {
 			b.Fatal(err)
 		}
+	}
+	// One incident of five minutes per monitor and day, so the uptime bars
+	// and percentages have real numbers.
+	if _, err := db.ExecContext(ctx, `
+		WITH RECURSIVE d(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM d WHERE i + 1 < ?)
+		INSERT INTO incidents (monitor_id, started_at, ended_at, reason)
+		SELECT m.id, ? - i * 86400 - 3600, ? - i * 86400 - 3300, 'HTTP 500' FROM monitors m, d`,
+		days, now, now); err != nil {
+		b.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
 		b.Fatal(err)
