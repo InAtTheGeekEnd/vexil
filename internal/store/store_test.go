@@ -42,7 +42,7 @@ func TestRollupColumns(t *testing.T) {
 		table string
 		want  []string
 	}{
-		{"hourly", []string{"monitor_id", "hour", "ok", "avg_latency"}},
+		{"hourly", []string{"monitor_id", "hour", "samples", "avg_latency"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.table, func(t *testing.T) {

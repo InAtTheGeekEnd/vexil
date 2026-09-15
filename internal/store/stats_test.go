@@ -99,7 +99,7 @@ func TestSummary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if empty.OK != 0 || empty.AvgLatencyMS != 0 {
+	if empty.Samples != 0 || empty.AvgLatencyMS != 0 {
 		t.Fatalf("empty summary = %+v", empty)
 	}
 	checks := []Check{
@@ -119,7 +119,7 @@ func TestSummary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.OK != 3 || got.AvgLatencyMS != 200 {
-		t.Fatalf("summary = %+v, want ok 3, avg 200", got)
+	if got.Samples != 3 || got.AvgLatencyMS != 200 {
+		t.Fatalf("summary = %+v, want 3 samples, avg 200", got)
 	}
 }

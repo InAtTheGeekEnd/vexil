@@ -106,14 +106,14 @@ func (s *Store) rollupHours(ctx context.Context, now time.Time) error {
 // costs one primary key lookup per monitor.
 func (s *Store) rollupHour(ctx context.Context, hour time.Time, replace bool) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO hourly (monitor_id, hour, ok, avg_latency)
+		INSERT INTO hourly (monitor_id, hour, samples, avg_latency)
 		SELECT monitor_id, ?1, SUM(ok), `+checksAvgLatency+`
 		FROM checks
 		WHERE monitor_id IN (SELECT id FROM monitors WHERE ?3 OR NOT EXISTS (
 				SELECT 1 FROM hourly WHERE hourly.monitor_id = monitors.id AND hourly.hour = ?1))
 			AND at >= ?1 AND at < ?2
 		GROUP BY monitor_id
-		ON CONFLICT(monitor_id, hour) DO UPDATE SET ok = excluded.ok, avg_latency = excluded.avg_latency`,
+		ON CONFLICT(monitor_id, hour) DO UPDATE SET samples = excluded.samples, avg_latency = excluded.avg_latency`,
 		hour.Unix(), hour.Add(time.Hour).Unix(), replace)
 	return err
 }

@@ -10,8 +10,8 @@ import (
 
 // hourRow is one row of the hourly table.
 type hourRow struct {
-	ok  int
-	avg sql.NullInt64
+	samples int
+	avg     sql.NullInt64
 }
 
 // readHour returns the hourly row of a monitor and hour, and false when
@@ -19,8 +19,8 @@ type hourRow struct {
 func readHour(t *testing.T, s *Store, id int64, hour time.Time) (hourRow, bool) {
 	t.Helper()
 	var r hourRow
-	err := s.db.QueryRowContext(context.Background(), `SELECT ok, avg_latency FROM hourly WHERE monitor_id = ? AND hour = ?`,
-		id, hour.Unix()).Scan(&r.ok, &r.avg)
+	err := s.db.QueryRowContext(context.Background(), `SELECT samples, avg_latency FROM hourly WHERE monitor_id = ? AND hour = ?`,
+		id, hour.Unix()).Scan(&r.samples, &r.avg)
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, false
 	}
@@ -61,7 +61,7 @@ func TestRollupHoursFillsMissing(t *testing.T) {
 	insert(Check{MonitorID: ids[1], At: old.Add(5 * time.Minute), Error: "timeout"})
 	insert(Check{MonitorID: ids[0], At: first.Add(59 * time.Minute), OK: true, LatencyMS: 80})
 	insert(Check{MonitorID: ids[0], At: before.Add(30 * time.Minute), OK: true, LatencyMS: 80})
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO hourly (monitor_id, hour, ok, avg_latency) VALUES (?, ?, 9, 1)`,
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO hourly (monitor_id, hour, samples, avg_latency) VALUES (?, ?, 9, 1)`,
 		ids[1], old.Unix()); err != nil {
 		t.Fatal(err)
 	}
