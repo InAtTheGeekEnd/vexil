@@ -1,6 +1,10 @@
 package web
 
 import (
+	"context"
+	"html"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -72,6 +76,57 @@ func TestUptime(t *testing.T) {
 		got := days[i]
 		if got.Day != want.Day || got.HasData != want.HasData || got.Incidents != want.Incidents || got.Percent < want.Percent-1e-9 || got.Percent > want.Percent+1e-9 {
 			t.Errorf("day %d = %+v, want %+v", i, got, want)
+		}
+	}
+}
+
+// TestPagesShareUptime gives a public monitor one incident of two hours on
+// the day before today. The dashboard, the detail page and the status page
+// must show the same percentages and the same one segment below 100.
+func TestPagesShareUptime(t *testing.T) {
+	s, st := newIdleServer(t, Options{})
+	ctx := context.Background()
+	now := time.Now()
+	m := &store.Monitor{Name: "Shop", Type: store.TypeHTTP, Target: "https://shop.example.com", IntervalS: 60, Public: true, CreatedAt: now.AddDate(0, 0, -100)}
+	if err := st.CreateMonitor(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	yesterday := now.UTC().Truncate(24*time.Hour).AddDate(0, 0, -1)
+	if _, err := st.OpenIncident(ctx, m.ID, yesterday.Add(6*time.Hour), "HTTP 503"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CloseIncident(ctx, m.ID, yesterday.Add(8*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	ts, c := loggedIn(t, s, st)
+	pages := map[string]string{
+		"dashboard": body(t, get(t, c, ts.URL+"/")),
+		"detail":    body(t, get(t, c, ts.URL+"/monitors/"+strconv.FormatInt(m.ID, 10))),
+		"status":    body(t, get(t, c, ts.URL+"/status")),
+	}
+	pct30 := formatPercent(float64(30*24-2) * 100 / float64(30*24))
+	pct90 := formatPercent(float64(90*24-2) * 100 / float64(90*24))
+	tests := []struct {
+		page, want string
+	}{
+		{"dashboard", pct30 + "<small>%</small>"},
+		{"detail", `<span class="label">Uptime · 30 d</span><span class="value">` + pct30 + `<small>%</small>`},
+		{"detail", `<span class="label">Uptime · 90 d</span><span class="value">` + pct90 + `<small>%</small>`},
+		{"detail", pct90 + "% over 90 days"},
+		{"status", pct90 + "% over 90 days"},
+	}
+	for _, tc := range tests {
+		if !strings.Contains(pages[tc.page], tc.want) {
+			t.Errorf("%s page lacks %q", tc.page, tc.want)
+		}
+	}
+	tip := yesterday.Format("2006-01-02") + "\n" + formatPercent(float64(22)*100/24) + "% uptime · 1 incident"
+	for name, b := range pages {
+		if n := strings.Count(b, `class="seg seg-down"`) + strings.Count(b, `class="seg seg-warn"`); n != 1 {
+			t.Errorf("%s page has %d segments below 100, want 1", name, n)
+		}
+		if !strings.Contains(b, html.EscapeString(tip)) {
+			t.Errorf("%s page lacks the tooltip %q", name, tip)
 		}
 	}
 }

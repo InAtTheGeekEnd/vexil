@@ -234,16 +234,18 @@ func TestDashboardOrderAndReorder(t *testing.T) {
 	}
 	t.Cleanup(func() { st.Close() })
 	ctx := context.Background()
-	now := time.Now()
+	// Whole seconds, as the store keeps them, so the percentages are exact.
+	now := time.Now().Truncate(time.Second)
 	var ids []int64
 	for _, name := range []string{"Alpha", "Bravo", "Charlie"} {
-		m := &store.Monitor{Name: name, Type: store.TypeTCP, Target: "127.0.0.1:1", IntervalS: 900}
+		m := &store.Monitor{Name: name, Type: store.TypeTCP, Target: "127.0.0.1:1", IntervalS: 900, CreatedAt: now.Add(-time.Hour)}
 		if err := st.CreateMonitor(ctx, m); err != nil {
 			t.Fatal(err)
 		}
 		ids = append(ids, m.ID)
 	}
-	// Alpha is up, Bravo is down (two failures), Charlie is paused.
+	// Alpha is up, Bravo is down (two failures and an open incident of ten
+	// minutes in its hour of life), Charlie is paused.
 	for _, c := range []store.Check{
 		{MonitorID: ids[0], At: now.Add(-time.Minute), OK: true, LatencyMS: 12},
 		{MonitorID: ids[0], At: now.Add(-2 * time.Minute), OK: true, LatencyMS: 20},
@@ -253,6 +255,9 @@ func TestDashboardOrderAndReorder(t *testing.T) {
 		if err := st.InsertCheck(ctx, c); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if _, err := st.OpenIncident(ctx, ids[1], now.Add(-10*time.Minute), "connection refused"); err != nil {
+		t.Fatal(err)
 	}
 	if err := st.SetPaused(ctx, ids[2], true, time.Now()); err != nil {
 		t.Fatal(err)
@@ -277,7 +282,8 @@ func TestDashboardOrderAndReorder(t *testing.T) {
 	if bravo < 0 || alpha < 0 || charlie < 0 || !(bravo < alpha && alpha < charlie) {
 		t.Fatalf("row order: Bravo %d Alpha %d Charlie %d, want Bravo first", bravo, alpha, charlie)
 	}
-	for _, want := range []string{"mon-down", "0<small>%", "100<small>%", ">Paused<", "seg seg-up", "seg seg-down"} {
+	// Bravo: 50 of its 60 minutes up, less the seconds the test has run.
+	for _, want := range []string{"mon-down", `mon-pct">83.`, "100<small>%", ">Paused<", "seg seg-up", "seg seg-down"} {
 		if !strings.Contains(b, want) {
 			t.Errorf("dashboard lacks %q", want)
 		}
