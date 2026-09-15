@@ -182,9 +182,10 @@ func (d uptimeDay) Tip() string {
 
 // formatPercent prints 100, 99.9, 99.95 or 87.2 without trailing zeros. It
 // cuts, not rounds, so 99.999 prints as 99.99: only a full 100 prints as
-// 100, and the colour of a segment or tile agrees with its number.
+// 100, and the colour of a segment or tile agrees with its number. The
+// small margin keeps float64 noise from cutting 99.99 down to 99.98.
 func formatPercent(p float64) string {
-	s := fmt.Sprintf("%.2f", math.Floor(p*100)/100)
+	s := fmt.Sprintf("%.2f", math.Floor(p*100+1e-6)/100)
 	s = strings.TrimRight(s, "0")
 	return strings.TrimSuffix(s, ".")
 }
